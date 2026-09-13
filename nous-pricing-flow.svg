@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="620" viewBox="0 0 1280 620" role="img" aria-labelledby="title desc">
+<title id="title">Live Nous pricing in Hermes Desktop</title><desc id="desc">Nous model catalog feeds the existing Hermes gateway, then all desktop model controls. Open editors recheck every five minutes; Refresh models fetches fresh prices immediately. Catalog reads do not require inference.</desc>
+<defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0 0 L10 5 L0 10" fill="#2457ea"/></marker></defs>
+<rect width="1280" height="620" rx="24" fill="#f3f6ff"/>
+<g font-family="Arial, Helvetica, sans-serif" fill="#14213d">
+<text x="48" y="62" font-size="14" font-weight="700" letter-spacing="2" fill="#2457ea">HERMES DESKTOP · NOUS PORTAL</text>
+<text x="48" y="112" font-size="36" font-weight="700">Live prices, wherever you choose a model</text>
+<text x="48" y="148" font-size="18" fill="#58657c">Model IDs and rates come from Nous’s current catalog.</text>
+<g fill="white" stroke="#d8e1f5" stroke-width="2">
+<rect x="48" y="191" width="346" height="220" rx="16"/>
+<rect x="467" y="191" width="346" height="220" rx="16"/>
+<rect x="886" y="191" width="346" height="220" rx="16"/>
+</g>
+<g stroke="#2457ea" stroke-width="3" marker-end="url(#arrow)"><path d="M405 300H451"/><path d="M824 300H870"/></g>
+<g font-size="13" font-weight="700" letter-spacing="1.5" fill="#2457ea"><text x="72" y="226">01 · LIVE SOURCE</text><text x="491" y="226">02 · EXISTING GATEWAY</text><text x="910" y="226">03 · SHARED DISPLAY</text></g>
+<g font-size="23" font-weight="700"><text x="72" y="270">Nous Portal</text><text x="491" y="270">Hermes catalog</text><text x="910" y="270">Model controls</text></g>
+<g font-size="17" fill="#58657c">
+<text x="72" y="307">GET /v1/models</text><text x="72" y="340">Model IDs, rates and cache prices</text><text x="72" y="373">Original prices when supplied</text>
+<text x="491" y="307">Existing model.options response</text><text x="491" y="340">USD per 1M tokens + discounts</text><text x="491" y="373">Profile / credential scoped cache</text>
+<text x="910" y="307">Composer + Models popup</text><text x="910" y="340">Settings, onboarding and bots</text><text x="910" y="373">Fallback, MoA and scheduled jobs</text>
+</g>
+<rect x="48" y="443" width="1184" height="123" rx="16" fill="#e4ecff"/>
+<g font-size="17"><text x="72" y="480"><tspan font-weight="700">Automatic:</tspan> open editors recheck every 5 minutes, with bounded follow-up while prices warm.</text><text x="72" y="516"><tspan font-weight="700">Refresh models:</tspan> bypass the Nous price cache and fetch current rates immediately.</text></g>
+<text x="48" y="599" font-size="15" fill="#58657c">Catalog reads only · No inference needed · No hardcoded prices</text>
+</g></svg>

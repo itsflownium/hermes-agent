@@ -1,0 +1,12 @@
+{
+  "application": "Hermes Agent Desktop",
+  "source": "Live signed-in Nous model catalog",
+  "sessionCount": 0,
+  "modelCatalogRequests": 3,
+  "rendererErrors": 0,
+  "inferenceRequested": false,
+  "screenshots": [
+    "hermes-nous-model-menu.png",
+    "hermes-nous-models-popup.png"
+  ]
+}
