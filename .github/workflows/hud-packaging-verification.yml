@@ -18,4 +18,4 @@ jobs:
       - name: Install locked test dependencies
         run: npm ci --workspace apps/desktop --workspace tests-js --include-workspace-root --include=dev --ignore-scripts --no-audit --no-fund
       - name: Compile the Windows helper and test staging, ASAR packaging, and recovery
-        run: npm test --workspace apps/desktop -- --project electron scripts/prepared-native-deps.test.mjs scripts/run-electron-builder.test.mjs scripts/before-pack.test.mjs
+        run: npm test --workspace apps/desktop -- --project electron scripts/windows-hud-packaging.test.mjs scripts/prepared-native-deps.test.mjs scripts/before-pack.test.mjs

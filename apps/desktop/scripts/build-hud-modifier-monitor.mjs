@@ -23,7 +23,14 @@ export function hudModifierBinaryRelativePath(platform = process.platform, arch 
   return `native/${platform}-${platform === 'darwin' ? 'universal' : arch}/hud-modifier-monitor${platform === 'win32' ? '.exe' : ''}`
 }
 
-/** @param {{ source?: string, distDir?: string, platform?: string, arch?: string, sysroot?: string | null }} [options] */
+export function warnWindowsHudUnavailable(file, detail = '') {
+  console.warn(`[hud-modifier] ${file} is unavailable${detail ? `: ${detail}` : ''}. ` +
+    'Continuing without modifier-tap summon; the standard HUD shortcut remains available. ' +
+    'If the helper disappeared after compilation, check Windows Security > Protection history ' +
+    'or your antivirus quarantine. Do not disable antivirus protection.')
+}
+
+/** @param {{source?: string, distDir?: string, platform?: string, arch?: string, sysroot?: string | null}} [options] */
 export function buildHudModifierMonitor({
   source = resolve(root, '../..'),
   distDir = resolve(source, 'apps/desktop/dist'),
@@ -107,6 +114,10 @@ export function buildHudModifierMonitor({
       } catch {
         break
       }
+    }
+    if (platform === 'win32') {
+      warnWindowsHudUnavailable(output, String(error.stderr || error.message))
+      return null
     }
     if (platform !== 'linux') throw error
     console.warn('[hud-modifier] unavailable: native build needs a C compiler, libx11-dev and libxi-dev; desktop packaging continues')

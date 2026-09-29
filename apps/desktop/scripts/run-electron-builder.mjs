@@ -7,6 +7,7 @@ import { isMain } from './utils.mjs'
 import { readPackagingInputs, preparationRequired } from './prepared-packaging.mjs'
 import { readNativeInputs } from './prepared-native-deps.mjs'
 import { pinnedPackageRoot } from './prepare-packaging-tools.mjs'
+import { packageWithHudFallback } from './package-with-hud-fallback.mjs'
 
 const source = path.resolve(import.meta.dirname, '../../..')
 const app = path.join(source, 'apps/desktop')
@@ -90,12 +91,9 @@ function toolsetArguments(inputs) {
  * @param {string[]} args
  * @param {string | undefined} nativeDeps
  * @param {typeof spawnSync} spawn
- * @param {string} [sourceDir]
  * @returns {number}
  */
-export function runSourceBuilds(args, nativeDeps, spawn, sourceDir = source) {
-  const source = path.resolve(sourceDir)
-  const app = path.join(source, 'apps/desktop')
+function runSourceBuilds(args, nativeDeps, spawn) {
   const platform = selectedPlatform(args)
   const requested = [...new Set(args.filter(arg => architectures.includes(arg)))]
   if (requested.includes('--universal')) throw new Error('No prepared universal native payload; use --x64 --arm64 for separate packages')
@@ -107,18 +105,7 @@ export function runSourceBuilds(args, nativeDeps, spawn, sourceDir = source) {
     const out = path.join(app, 'build/packager', target)
     const native = nativeDeps || path.join(app, requested.length ? `build/native-deps-${target}` : 'build/native-deps')
     const commands = []
-    let prepared = false
-    if (!nativeDeps) {
-      try {
-        readNativeInputs({ source, nativeDeps: native, platform, arch })
-        prepared = true
-      } catch {
-        // A receipt can outlive its files (interrupted builds or quarantine).
-        // Only the source convenience path may re-run preparation; --prepared
-        // and explicitly supplied native inputs remain consume-only.
-      }
-    }
-    if (!nativeDeps && !prepared) {
+    if (!nativeDeps && (requested.length || platform !== process.platform || !fs.existsSync(`${native}.prepared.json`))) {
       commands.push([path.join(import.meta.dirname, 'stage-native-deps.mjs'), '--source', source,
         '--out', native, '--platform', platform, '--arch', arch])
     }
@@ -144,7 +131,7 @@ function selectedPlatform(args) {
   return platforms[0] || process.platform
 }
 
-/** @param {string[]} args @param {{ spawn?: typeof spawnSync }} [options] @returns {number} */
+/** @param {string[]} args @param {{ spawn?: typeof spawnSync }} [options] @returns {number | Promise<number>} */
 export function runElectronBuilder(args, { spawn = spawnSync } = {}) {
   const validateOnly = args.includes('--validate-only')
   args = args.filter(arg => arg !== '--validate-only')
@@ -173,9 +160,14 @@ export function runElectronBuilder(args, { spawn = spawnSync } = {}) {
     HERMES_PREPARED_NATIVE_DEPS: nativeDeps, HERMES_PREPARED_TARGET: inputs.target }
   if (inputs.dmgbuild) env.CUSTOM_DMGBUILD_PATH = inputs.dmgbuild
   if (inputs.windows?.dotnetRoot) env.DOTNET_ROOT = inputs.windows.dotnetRoot
-  const result = spawn(process.execPath, [...preloads, path.join(builder, bin), ...args,
+  const builderArgs = [...preloads, path.join(builder, bin), ...args,
     '--config', 'electron-builder.config.cjs', '--publish', 'never', `-c.electronDist=${inputs.electron}`,
-    ...toolsetArguments(inputs)], { cwd: app, stdio: 'inherit', env })
+    ...toolsetArguments(inputs)]
+  if (platform === 'win32') {
+    return packageWithHudFallback({ command: process.execPath, args: builderArgs,
+      options: { cwd: app, env }, app, platform, arch }).then(result => result.status ?? 1)
+  }
+  const result = spawn(process.execPath, builderArgs, { cwd: app, stdio: 'inherit', env })
   if (result.error) throw result.error
   return result.status ?? 1
 }
@@ -188,4 +180,4 @@ function sourceFormats(args) {
   return formats.length ? formats : platform === 'darwin' ? ['dmg', 'zip'] : platform === 'win32' ? ['msix'] : ['AppImage']
 }
 
-if (isMain(import.meta.url)) process.exitCode = runElectronBuilder(process.argv.slice(2))
+if (isMain(import.meta.url)) process.exitCode = await runElectronBuilder(process.argv.slice(2))

@@ -5,7 +5,6 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, expect, test } from 'vitest'
 import { stageGetWindows, stageNodePtyInto } from '../apps/desktop/scripts/stage-native-deps.mjs'
-import { buildHudModifierMonitor } from '../apps/desktop/scripts/build-hud-modifier-monitor.mjs'
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const roots = []
@@ -53,7 +52,6 @@ function fixture() {
   // The native input is the real host binding, not a fake compiler/dependency.
   stageNodePtyInto(join(repo, 'node_modules/node-pty'), join(nativeDeps, 'node-pty'))
   stageGetWindows({ source: repo, out: nativeDeps })
-  if (process.platform === 'win32') buildHudModifierMonitor({ source: repo, distDir: nativeDeps })
   put(join(nativeDeps, 'native/helper-fixture'), 'prepared executable resource')
   const stamp = join(root, 'install-stamp.json')
   put(stamp, JSON.stringify({ schemaVersion: 1, payload: 'light', updateMechanism: 'external', commit: 'a'.repeat(40), tag: 'v1.2.3' }))

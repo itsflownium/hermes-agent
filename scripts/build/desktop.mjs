@@ -60,7 +60,7 @@ export async function buildDesktop({ source, out, icons, stamp, nativeDeps, type
       build: { outDir: product, emptyOutDir: true },
     })
     await bundleElectronMain({ source, out: product, stamp })
-    copyNativeTree({ nativeDeps, out: join(product, 'node_modules'), platform })
+    copyNativeTree({ nativeDeps, out: join(product, 'node_modules') })
     const result = checkDistBuilt(product)
     if (!result.ok) throw new Error(result.error)
     recordProduct({ source, product: 'desktop', out: product, inputs })
