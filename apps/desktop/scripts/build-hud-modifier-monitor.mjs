@@ -18,6 +18,7 @@ export function resolveWindowsFrameworkCompiler() {
   return compiler
 }
 
+/** @param {string} [platform] @param {string} [arch] @returns {string} */
 export function hudModifierBinaryRelativePath(platform = process.platform, arch = process.arch) {
   return `native/${platform}-${platform === 'darwin' ? 'universal' : arch}/hud-modifier-monitor${platform === 'win32' ? '.exe' : ''}`
 }

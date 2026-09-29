@@ -90,9 +90,12 @@ function toolsetArguments(inputs) {
  * @param {string[]} args
  * @param {string | undefined} nativeDeps
  * @param {typeof spawnSync} spawn
+ * @param {string} [sourceDir]
  * @returns {number}
  */
-function runSourceBuilds(args, nativeDeps, spawn) {
+export function runSourceBuilds(args, nativeDeps, spawn, sourceDir = source) {
+  const source = path.resolve(sourceDir)
+  const app = path.join(source, 'apps/desktop')
   const platform = selectedPlatform(args)
   const requested = [...new Set(args.filter(arg => architectures.includes(arg)))]
   if (requested.includes('--universal')) throw new Error('No prepared universal native payload; use --x64 --arm64 for separate packages')
@@ -104,7 +107,18 @@ function runSourceBuilds(args, nativeDeps, spawn) {
     const out = path.join(app, 'build/packager', target)
     const native = nativeDeps || path.join(app, requested.length ? `build/native-deps-${target}` : 'build/native-deps')
     const commands = []
-    if (!nativeDeps && (requested.length || platform !== process.platform || !fs.existsSync(`${native}.prepared.json`))) {
+    let prepared = false
+    if (!nativeDeps) {
+      try {
+        readNativeInputs({ source, nativeDeps: native, platform, arch })
+        prepared = true
+      } catch {
+        // A receipt can outlive its files (interrupted builds or quarantine).
+        // Only the source convenience path may re-run preparation; --prepared
+        // and explicitly supplied native inputs remain consume-only.
+      }
+    }
+    if (!nativeDeps && !prepared) {
       commands.push([path.join(import.meta.dirname, 'stage-native-deps.mjs'), '--source', source,
         '--out', native, '--platform', platform, '--arch', arch])
     }

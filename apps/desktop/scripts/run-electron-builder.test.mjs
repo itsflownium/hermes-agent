@@ -2,11 +2,12 @@ import assert from 'node:assert/strict'
 import { test } from 'vitest'
 import { spawnSync } from 'node:child_process'
 import path from 'node:path'
-import { builderNodeOptions, runElectronBuilder } from './run-electron-builder.mjs'
+import { builderNodeOptions, runElectronBuilder, runSourceBuilds } from './run-electron-builder.mjs'
 import fs from 'node:fs'
 import os from 'node:os'
 import { publishPackagingInputs } from './prepared-packaging.mjs'
-import { recordNativeInputs } from './prepared-native-deps.mjs'
+import { recordNativeInputs, readNativeInputs, copyNativeInputs } from './prepared-native-deps.mjs'
+import { hudModifierBinaryRelativePath } from './build-hud-modifier-monitor.mjs'
 
 test('validate-only admits real prepared inputs without launching tools and rejects unsafe arguments', async () => {
   const source = path.resolve(import.meta.dirname, '../../..')
@@ -20,6 +21,11 @@ test('validate-only admits real prepared inputs without launching tools and reje
     const nativeDeps = path.join(out, 'native')
     fs.mkdirSync(path.join(nativeDeps, 'node-pty'), { recursive: true })
     fs.writeFileSync(path.join(nativeDeps, 'node-pty/package.json'), '{}')
+    if (process.platform === 'win32') {
+      const helper = path.join(nativeDeps, hudModifierBinaryRelativePath())
+      fs.mkdirSync(path.dirname(helper), { recursive: true })
+      fs.writeFileSync(helper, 'helper fixture')
+    }
     recordNativeInputs({ source, out: nativeDeps, platform: process.platform, arch: process.arch })
     const args = ['--validate-only', '--prepared', manifest, '--native-deps', nativeDeps, '--dir']
     const options = { spawn: () => { throw new Error('validation must not launch tools') } }
@@ -30,6 +36,58 @@ test('validate-only admits real prepared inputs without launching tools and reje
     assert.equal(cli.status, 0, cli.stderr)
   } finally {
     fs.rmSync(out, { recursive: true, force: true })
+  }
+})
+
+test('source packaging repairs damaged native preparation once and leaves explicit inputs consume-only', () => {
+  const source = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'source-native-repair-')))
+  try {
+    const app = path.join(source, 'apps/desktop')
+    const nativeDeps = path.join(app, 'build/native-deps')
+    fs.mkdirSync(path.join(nativeDeps, 'node-pty'), { recursive: true })
+    fs.writeFileSync(path.join(nativeDeps, 'node-pty/package.json'), '{}')
+    fs.writeFileSync(path.join(source, 'package-lock.json'), '{}')
+    fs.writeFileSync(path.join(app, 'package.json'), '{}')
+    fs.cpSync(path.join(import.meta.dirname, '../electron/native'), path.join(app, 'electron/native'), { recursive: true })
+    const selection = { source, nativeDeps, platform: process.platform, arch: process.arch }
+    const helper = path.join(nativeDeps, hudModifierBinaryRelativePath())
+    const prepare = () => {
+      fs.mkdirSync(path.dirname(helper), { recursive: true })
+      fs.writeFileSync(helper, 'prepared executable bytes')
+      recordNativeInputs({ ...selection, out: nativeDeps })
+    }
+    prepare()
+    const calls = []
+    const spawn = (_node, argv) => {
+      const command = path.basename(argv[0])
+      calls.push(command)
+      if (command === 'stage-native-deps.mjs') prepare()
+      if (command === 'run-electron-builder.mjs') {
+        readNativeInputs(selection)
+        copyNativeInputs({ ...selection, out: path.join(app, 'dist/node_modules') })
+      }
+      return { status: 0 }
+    }
+    const run = native => runSourceBuilds(['--dir'], native, spawn, source)
+    assert.equal(run(), 0)
+    assert.equal(calls.includes('stage-native-deps.mjs'), false)
+    for (const damage of [() => fs.rmSync(helper), () => fs.writeFileSync(helper, 'changed bytes')]) {
+      damage()
+      calls.length = 0
+      assert.equal(run(), 0)
+      assert.deepEqual(calls, ['stage-native-deps.mjs', 'prepare-packaging-tools.mjs', 'run-electron-builder.mjs'])
+      assert.deepEqual(fs.readFileSync(path.join(app, 'dist', hudModifierBinaryRelativePath())), fs.readFileSync(helper))
+    }
+    fs.rmSync(helper)
+    calls.length = 0
+    assert.throws(() => run(nativeDeps), /native inputs|Windows HUD modifier helper/)
+    assert.equal(calls.includes('stage-native-deps.mjs'), false)
+    const failed = []
+    assert.equal(runSourceBuilds(['--dir'], undefined,
+      (_node, argv) => { failed.push(path.basename(argv[0])); return { status: 7 } }, source), 7)
+    assert.deepEqual(failed, ['stage-native-deps.mjs'])
+  } finally {
+    fs.rmSync(source, { recursive: true, force: true })
   }
 })
 
