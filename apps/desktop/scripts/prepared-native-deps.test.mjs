@@ -72,7 +72,7 @@ test.runIf(process.platform === 'win32')('the host-built Windows HUD helper surv
     const { createPackageWithOptions, extractFile } = await import('@electron/asar')
     const archive = path.join(root, 'app.asar')
     await createPackageWithOptions(path.join(root, 'product'), archive, { unpack: 'native/**' })
-    assert.deepEqual(extractFile(archive, hudModifierBinaryRelativePath()), fs.readFileSync(helper))
+    assert.deepEqual(extractFile(archive, path.normalize(hudModifierBinaryRelativePath())), fs.readFileSync(helper))
   } finally {
     fs.rmSync(root, { recursive: true, force: true })
   }

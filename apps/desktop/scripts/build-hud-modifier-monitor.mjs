@@ -23,6 +23,7 @@ export function hudModifierBinaryRelativePath(platform = process.platform, arch 
   return `native/${platform}-${platform === 'darwin' ? 'universal' : arch}/hud-modifier-monitor${platform === 'win32' ? '.exe' : ''}`
 }
 
+/** @param {{ source?: string, distDir?: string, platform?: string, arch?: string, sysroot?: string | null }} [options] */
 export function buildHudModifierMonitor({
   source = resolve(root, '../..'),
   distDir = resolve(source, 'apps/desktop/dist'),

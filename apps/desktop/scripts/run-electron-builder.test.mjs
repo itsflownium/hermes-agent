@@ -16,8 +16,15 @@ test('validate-only admits real prepared inputs without launching tools and reje
     const electron = path.join(out, 'electron.zip')
     fs.writeFileSync(electron, 'fixture archive')
     const toolsets = { sevenZip: path.join(out, 'sevenZip'), icons: path.join(out, 'icons') }
+    const windows = process.platform === 'win32'
+      ? { makeappx: 'unused', signtool: 'unused', dlib: null, dotnetRoot: path.join(out, 'dotnet') }
+      : null
+    if (windows) {
+      toolsets.winCodeSign = path.join(out, 'winCodeSign')
+      fs.mkdirSync(windows.dotnetRoot)
+    }
     for (const dir of Object.values(toolsets)) fs.mkdirSync(dir)
-    const manifest = await publishPackagingInputs({ source, out, target: `${process.platform}-${process.arch}`, formats: ['dir'], electron, toolsets })
+    const manifest = await publishPackagingInputs({ source, out, target: `${process.platform}-${process.arch}`, formats: ['dir'], electron, toolsets, windows })
     const nativeDeps = path.join(out, 'native')
     fs.mkdirSync(path.join(nativeDeps, 'node-pty'), { recursive: true })
     fs.writeFileSync(path.join(nativeDeps, 'node-pty/package.json'), '{}')
