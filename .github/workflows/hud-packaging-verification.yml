@@ -1,0 +1,21 @@
+name: Verify Windows HUD packaging
+on:
+  push:
+    branches: [verify/windows-hud-packaging]
+permissions:
+  contents: read
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22.22.1'
+      - name: Install locked test dependencies
+        run: npm ci --workspace apps/desktop --workspace tests-js --include-workspace-root --include=dev --ignore-scripts --no-audit --no-fund
+      - name: Compile the Windows helper and test staging, ASAR packaging, and recovery
+        run: npm test --workspace apps/desktop -- --project electron scripts/prepared-native-deps.test.mjs scripts/run-electron-builder.test.mjs scripts/before-pack.test.mjs
