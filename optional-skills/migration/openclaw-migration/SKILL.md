@@ -67,6 +67,14 @@ Before running the helper:
 With `--migrate-secrets`, it will also import a small allowlisted set of Hermes-compatible secrets, currently:
 
 - `TELEGRAM_BOT_TOKEN`
+- `DISCORD_BOT_TOKEN`
+- `SLACK_BOT_TOKEN` and `SLACK_APP_TOKEN`
+- `OPENROUTER_API_KEY`, `OPENAI_API_KEY`, and `ANTHROPIC_API_KEY`
+- `ELEVENLABS_API_KEY` and `VOICE_TOOLS_OPENAI_KEY`
+
+Channel credentials can be plain strings, environment references resolved from the source `.env`, or team-scoped `store` SecretRefs read from the source `state/openclaw.sqlite`. Missing credentials and unsupported `file`/`exec` references are reported for manual configuration. Credentials are imported only with `--migrate-secrets`.
+
+Cron job definitions are archived for manual recreation with `hermes cron`; they are not installed into the Hermes scheduler. The terminal output, JSON report, and saved summary call out this loss with job counts when available. Legacy JSON and current SQLite stores are both inspected.
 
 ## Default workflow
 

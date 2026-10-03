@@ -15,7 +15,9 @@ import json
 import os
 import re
 import shutil
+import sqlite3
 import tempfile
+from contextlib import closing
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -37,6 +39,9 @@ SKILL_CATEGORY_DESCRIPTION = (
 SKILL_CONFLICT_MODES = {"skip", "overwrite", "rename"}
 SUPPORTED_SECRET_TARGETS={
     "TELEGRAM_BOT_TOKEN",
+    "DISCORD_BOT_TOKEN",
+    "SLACK_BOT_TOKEN",
+    "SLACK_APP_TOKEN",
     "OPENROUTER_API_KEY",
     "OPENAI_API_KEY",
     "ANTHROPIC_API_KEY",
@@ -325,25 +330,57 @@ def ensure_parent(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
 
 
-def resolve_secret_input(value: Any, env: Optional[Dict[str, str]] = None) -> Optional[str]:
+def resolve_secret_input(
+    value: Any, env: Optional[Dict[str, str]] = None, *,
+    store_path: Optional[Path] = None, config: Optional[Dict[str, Any]] = None,
+) -> Optional[str]:
     """Resolve an OpenClaw SecretInput value to a plain string.
 
     SecretInput can be:
     - A plain string: "sk-..."
     - An env template: "${OPENROUTER_API_KEY}"
     - A SecretRef object: {"source": "env", "id": "OPENROUTER_API_KEY"}
+    - A team-scoped store SecretRef, read from the source SQLite database
     """
     if isinstance(value, str):
         # Check for env template: "${VAR_NAME}"
         m = re.match(r"^\$\{(\w+)\}$", value.strip())
-        if m and env:
-            return env.get(m.group(1), "").strip() or None
+        if m:
+            return (env or {}).get(m.group(1), "").strip() or None
         return value.strip() or None
     if isinstance(value, dict):
         source = value.get("source", "")
         ref_id = value.get("id", "")
-        if source == "env" and ref_id and env:
+        if source == "env" and isinstance(ref_id, str) and ref_id and env:
             return env.get(ref_id, "").strip() or None
+        if source == "store" and store_path is not None:
+            if not isinstance(ref_id, str) or not re.fullmatch(r"[A-Z][A-Z0-9_]{0,127}", ref_id):
+                return None
+            secrets = (config or {}).get("secrets") or {}
+            providers = secrets.get("providers") or {}
+            default = (secrets.get("defaults") or {}).get("store", "default")
+            provider = value.get("provider", default)
+            if not isinstance(provider, str):
+                return None
+            registered = providers.get(provider)
+            if registered is not None:
+                if not isinstance(registered, dict) or registered.get("source") != "store":
+                    return None
+            elif provider != default:
+                return None
+            # mode=ro never creates/migrates the source store. An explicit
+            # store reference must not fall back to a same-named .env value.
+            try:
+                with closing(sqlite3.connect(store_path.resolve().as_uri() + "?mode=ro", uri=True)) as db:
+                    row = db.execute(
+                        "SELECT value FROM secret_store_entries WHERE scope_kind = 'team' "
+                        "AND scope_id = '' AND name = ? AND deleted_at_ms IS NULL", (ref_id,),
+                    ).fetchone()
+            except (OSError, sqlite3.Error):
+                return None
+            if row and isinstance(row[0], str):
+                return row[0].strip() or None
+            return None
         # File/exec sources can't be resolved here — return None
     return None
 
@@ -1220,6 +1257,10 @@ class Migrator:
                 "Re-run with --migrate-secrets to copy supported keys into the "
                 "Hermes env file."
             )
+        warnings.extend(
+            item.reason for item in self.items
+            if item.details.get("unresolved_key") or item.details.get("requires_manual_recreation")
+        )
         return warnings
 
     def _build_next_steps(self, summary: Dict[str, int]) -> List[str]:
@@ -1245,6 +1286,7 @@ class Migrator:
             steps.append(
                 "Re-run with --overwrite to apply items that were blocked by conflicts."
             )
+        steps.extend(item.reason for item in self.items if item.details.get("requires_manual_recreation"))
         return steps
 
     def maybe_backup(self, path: Path) -> Optional[Path]:
@@ -1551,7 +1593,10 @@ class Migrator:
         secret_additions: Dict[str, str] = {}
 
         tg_cfg = config.get("channels", {}).get("telegram", {})
-        telegram_token = self._get_channel_field(tg_cfg, "botToken") if isinstance(tg_cfg, dict) else None
+        telegram_token = self._resolve_channel_secret(
+            self._get_channel_field(tg_cfg, "botToken") if isinstance(tg_cfg, dict) else None,
+            "secret-settings", "TELEGRAM_BOT_TOKEN", config,
+        )
         if isinstance(telegram_token, str) and telegram_token.strip():
             secret_additions["TELEGRAM_BOT_TOKEN"] = telegram_token.strip()
 
@@ -1567,9 +1612,22 @@ class Migrator:
                 supported_targets=sorted(SUPPORTED_SECRET_TARGETS),
             )
 
-    def _resolve_channel_secret(self, value: Any) -> Optional[str]:
-        """Resolve a channel config value that may be a SecretRef."""
-        return resolve_secret_input(value, self.load_openclaw_env())
+    def _resolve_channel_secret(self, value: Any, kind: str, target: str, config: Dict[str, Any]) -> Optional[str]:
+        """Resolve only opted-in credentials and disclose present, unresolved inputs."""
+        if not self.migrate_secrets:
+            return None
+        resolved = resolve_secret_input(
+            value, self.load_openclaw_env(), store_path=self.source_root / "state" / "openclaw.sqlite",
+            config=config,
+        )
+        if value and not resolved:
+            self.record(
+                kind, self.source_root / "openclaw.json", self.target_root / ".env", "skipped",
+                f"{target} was NOT migrated: its credential could not be resolved. "
+                f"Add it manually with 'hermes config set {target} <value>'.",
+                unresolved_key=target,
+            )
+        return resolved
 
     @staticmethod
     def _get_channel_field(ch_cfg: Dict[str, Any], field: str) -> Any:
@@ -1589,7 +1647,9 @@ class Migrator:
         additions: Dict[str, str] = {}
         discord = config.get("channels", {}).get("discord", {})
         if isinstance(discord, dict):
-            token = self._get_channel_field(discord, "token")
+            token = self._resolve_channel_secret(
+                self._get_channel_field(discord, "token"), "discord-settings", "DISCORD_BOT_TOKEN", config,
+            )
             if isinstance(token, str) and token.strip():
                 additions["DISCORD_BOT_TOKEN"] = token.strip()
             allow_from = self._get_channel_field(discord, "allowFrom") or []
@@ -1607,10 +1667,14 @@ class Migrator:
         additions: Dict[str, str] = {}
         slack = config.get("channels", {}).get("slack", {})
         if isinstance(slack, dict):
-            bot_token = self._get_channel_field(slack, "botToken")
+            bot_token = self._resolve_channel_secret(
+                self._get_channel_field(slack, "botToken"), "slack-settings", "SLACK_BOT_TOKEN", config,
+            )
             if isinstance(bot_token, str) and bot_token.strip():
                 additions["SLACK_BOT_TOKEN"] = bot_token.strip()
-            app_token = self._get_channel_field(slack, "appToken")
+            app_token = self._resolve_channel_secret(
+                self._get_channel_field(slack, "appToken"), "slack-settings", "SLACK_APP_TOKEN", config,
+            )
             if isinstance(app_token, str) and app_token.strip():
                 additions["SLACK_APP_TOKEN"] = app_token.strip()
             allow_from = self._get_channel_field(slack, "allowFrom") or []
@@ -1686,7 +1750,10 @@ class Migrator:
                 if not isinstance(provider_cfg, dict):
                     continue
                 raw_key = provider_cfg.get("apiKey")
-                api_key = resolve_secret_input(raw_key, openclaw_env)
+                api_key = resolve_secret_input(
+                    raw_key, openclaw_env, store_path=self.source_root / "state" / "openclaw.sqlite",
+                    config=config,
+                )
                 if not api_key:
                     # Warn if a SecretRef with file/exec source was silently unresolvable
                     if isinstance(raw_key, dict) and raw_key.get("source") in {"file", "exec"}:
@@ -2387,13 +2454,20 @@ class Migrator:
         cron = config.get("cron") or {}
         cron_store = self.source_root / "cron"
         found_any = False
+        archive_paths: List[str] = []
+        inventories: List[tuple[str, Optional[int], Optional[int]]] = []
+        jobs = cron.get("jobs") if isinstance(cron, dict) else None
 
         # Archive the full cron config when present
         if cron:
             found_any = True
+            dest = self.archive_dir / "cron-config.json" if self.archive_dir else Path("archive/cron-config.json")
+            archive_paths.append(str(dest))
+            if isinstance(jobs, list):
+                enabled = sum(job.get("enabled", True) is not False for job in jobs if isinstance(job, dict))
+                inventories.append((str(dest), len(jobs), enabled))
             if self.archive_dir and self.execute:
                 self.archive_dir.mkdir(parents=True, exist_ok=True)
-                dest = self.archive_dir / "cron-config.json"
                 dest.write_text(json.dumps(cron, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
                 self.record("cron-jobs", "openclaw.json cron.*", str(dest), "archived",
                             "Cron config archived. Use 'hermes cron' to recreate jobs manually.")
@@ -2402,13 +2476,70 @@ class Migrator:
                             "archived", "Would archive cron config")
 
         # Also check for cron store files even when config.cron is missing
-        if cron_store.is_dir() and self.archive_dir:
+        if cron_store.is_dir():
             found_any = True
-            dest_cron = self.archive_dir / "cron-store"
+            dest_cron = self.archive_dir / "cron-store" if self.archive_dir else Path("archive/cron-store")
+            archive_paths.append(str(dest_cron))
+            store_file = cron_store / "jobs.json"
+            job_count = enabled_count = None
+            if store_file.exists():
+                try:
+                    stored = json.loads(read_text(store_file)).get("jobs")
+                    if isinstance(stored, list):
+                        job_count = len(stored)
+                        enabled_count = sum(job.get("enabled", True) is not False for job in stored if isinstance(job, dict))
+                except (OSError, ValueError, AttributeError):
+                    pass
+            inventories.append((str(dest_cron), job_count, enabled_count))
             if self.execute:
                 shutil.copytree(cron_store, dest_cron, dirs_exist_ok=True)
             self.record("cron-jobs", str(cron_store), str(dest_cron), "archived",
                         "Cron job store archived")
+
+        # Current OpenClaw stores cron definitions in shared SQLite state;
+        # copying the legacy cron directory alone omits those jobs entirely.
+        database = self.source_root / "state" / "openclaw.sqlite"
+        if database.exists():
+            try:
+                with closing(sqlite3.connect(database.resolve().as_uri() + "?mode=ro", uri=True)) as db:
+                    has_table = db.execute(
+                        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'cron_jobs'"
+                    ).fetchone()
+                    rows = db.execute("SELECT job_id, enabled, job_json FROM cron_jobs").fetchall() if has_table else []
+                if rows:
+                    found_any = True
+                    job_count = len(rows)
+                    enabled_count = sum(bool(row[1]) for row in rows)
+                    dest = self.archive_dir / "cron-sqlite-jobs.json" if self.archive_dir else Path("archive/cron-sqlite-jobs.json")
+                    archive_paths.append(str(dest))
+                    inventories.append((str(dest), job_count, enabled_count))
+                    if self.execute:
+                        ensure_parent(dest)
+                        dest.write_text(json.dumps(
+                            [{"id": row[0], "enabled": bool(row[1]), "job_json": row[2]} for row in rows],
+                            indent=2, ensure_ascii=False,
+                        ) + "\n", encoding="utf-8")
+                    self.record("cron-jobs", database, dest, "archived", "SQLite cron job definitions archived")
+            except (OSError, sqlite3.Error):
+                found_any = True
+                inventories.append((str(database), None, None))
+                self.record("cron-jobs", database, None, "error", "Could not read the source SQLite cron store; review it manually.")
+
+        # Describe each archive independently: an empty/stale store must not
+        # hide jobs in another source, and overlapping stores are not summed.
+        if found_any and not inventories:
+            inventories.append((", ".join(archive_paths), None, None))
+        for archive, job_count, enabled_count in inventories:
+            if job_count == 0:
+                continue
+            count = str(job_count) if job_count is not None else "An unknown number of"
+            enabled = f" ({enabled_count} enabled)" if enabled_count is not None else ""
+            self.record(
+                "cron-jobs", self.source_root, None, "skipped",
+                f"{count} cron jobs{enabled} were NOT migrated. Recreate them with 'hermes cron'; "
+                f"review {archive}" + ("." if self.execute else " (archives are created during --execute)."),
+                requires_manual_recreation=True, job_count=job_count, enabled_jobs=enabled_count,
+            )
 
         if not found_any:
             self.record("cron-jobs", None, None, "skipped", "No cron configuration found")
@@ -3235,6 +3366,12 @@ def main() -> int:
             print(f"    ✖ {item['kind']}: {item.get('reason', '')}")
 
     # PM2 reassurance
+    if report.get("warnings"):
+        print()
+        print("  Warnings:")
+        for warning in report["warnings"]:
+            print(f"    ⚠ {warning}")
+
     print()
     print("  ℹ PM2 processes (Discord/Telegram bots) are NOT affected.")
 
