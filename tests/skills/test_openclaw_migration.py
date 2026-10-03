@@ -408,7 +408,7 @@ def test_source_candidate_finds_files_in_custom_workspace(tmp_path: Path):
 
 
 def test_slack_settings_migrated(tmp_path: Path):
-    """Slack bot/app tokens and allowlist migrate to .env."""
+    """Opted-in Slack bot/app tokens and allowlist migrate to .env."""
     mod = load_module()
     source = tmp_path / ".openclaw"
     target = tmp_path / ".hermes"
@@ -430,7 +430,7 @@ def test_slack_settings_migrated(tmp_path: Path):
 
     migrator = mod.Migrator(
         source_root=source, target_root=target, execute=True,
-        workspace_target=None, overwrite=False, migrate_secrets=False, output_dir=None,
+        workspace_target=None, overwrite=False, migrate_secrets=True, output_dir=None,
         selected_options={"slack-settings"},
     )
     report = migrator.migrate()
