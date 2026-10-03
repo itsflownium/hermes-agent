@@ -1,4 +1,4 @@
-name: Manual backend Windows validation
+name: Issue fixes Windows validation
 on:
   push:
     branches: [test/windows-dashboard-respawn-ci]
@@ -15,7 +15,15 @@ jobs:
         with:
           extras: '[]'
           test-environment: 'true'
-      - name: Run native process regression tests
+      - name: Run migration and native process regression tests
         shell: bash
         run: |
-          HERMES_TEST_FILE_RETRIES=0 scripts/run_tests.sh tests/hermes_cli/test_dashboard_respawn_windows_live.py -q
+          HERMES_TEST_FILE_RETRIES=0 scripts/run_tests.sh \
+            tests/hermes_cli/test_dashboard_respawn_windows_live.py \
+            tests/hermes_cli/test_update_stale_dashboard.py \
+            tests/hermes_cli/test_stale_pid_guard.py \
+            tests/hermes_cli/test_update_serve_generation_recovery.py \
+            tests/skills/test_openclaw_migration.py \
+            tests/skills/test_openclaw_migration_capabilities.py \
+            tests/skills/test_openclaw_migration_hardening.py \
+            tests/hermes_cli/test_setup_openclaw_migration.py -q
