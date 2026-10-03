@@ -606,10 +606,66 @@ def test_rebrand_text_replaces_openclaw_variants():
     assert mod.rebrand_text("I told Open Claw to use dark mode") == "I told Hermes to use dark mode"
     assert mod.rebrand_text("Open-Claw config is great") == "Hermes config is great"
     assert mod.rebrand_text("OPENCLAW uses tools well") == "Hermes uses tools well"
-    # All-lowercase matches → lowercase ``hermes``; this preserves the
-    # real filesystem path ``~/.hermes`` (Hermes home) when rebranding
-    # memory entries that reference ``~/.openclaw`` or ``openclaw`` prose.
+    # Lowercase prose mentions retain their casing.
     assert mod.rebrand_text("openclaw should always respond concisely") == "hermes should always respond concisely"
+
+
+def test_rebrand_text_preserves_identifiers_and_sentence_punctuation():
+    """Regression for #131862: prose changes identity, recorded objects do not."""
+    mod = load_module()
+    references = [
+        "trim.openclaw", "state/openclaw.sqlite", "~/.openclaw/config.yaml",
+        "/srv/OpenClaw", r"C:\Users\OpenClaw\state", "openclaw-agent",
+        "moltbot_backup", "ClawdBot.dll", "https://openclaw.example/docs",
+        "user@openclaw", "$OPENCLAW", "%OPENCLAW%", "`openclaw`",
+        "`run openclaw status`", "```sh\nrun openclaw status\n```",
+        "~~~sh\nrun openclaw status\n~~~",
+    ]
+    for reference in references:
+        text = f"OpenClaw remembers {reference}."
+        assert mod.rebrand_text(text) == f"Hermes remembers {reference}."
+    assert mod.rebrand_text("I use OpenClaw. ClawdBot: helpful; MoltBot!") == (
+        "I use Hermes. Hermes: helpful; Hermes!"
+    )
+
+
+def test_migration_preserves_references_across_persona_and_memory_files(tmp_path: Path):
+    mod = load_module()
+    source = tmp_path / "source"
+    workspace = source / "workspace"
+    workspace.mkdir(parents=True)
+    daily = workspace / "memory" / "2026-10-03.md"
+    daily.parent.mkdir()
+    text = "OpenClaw remembers trim.openclaw and state/openclaw.sqlite in ~/.openclaw/.\n"
+    originals = {}
+    for name in ("SOUL.md", "AGENTS.md", "MEMORY.md", "USER.md"):
+        path = workspace / name
+        path.write_text(text, encoding="utf-8")
+        originals[path] = path.read_bytes()
+    daily.write_text("OpenClaw backed up /srv/openclaw/state.sqlite.\n", encoding="utf-8")
+    originals[daily] = daily.read_bytes()
+    target = tmp_path / "target"
+    existing_memory = target / "memories" / "MEMORY.md"
+    existing_memory.parent.mkdir(parents=True)
+    existing = "OpenClaw history: /old/openclaw.sqlite"
+    existing_memory.write_text(existing + "\n", encoding="utf-8")
+    workspace_target = tmp_path / "project"
+    migrator = mod.Migrator(
+        source_root=source, target_root=target, execute=True,
+        workspace_target=workspace_target, overwrite=False,
+        migrate_secrets=False, output_dir=None,
+        selected_options={"soul", "workspace-agents", "memory", "user-profile", "daily-memory"},
+    )
+
+    report = migrator.migrate()
+
+    expected = text.replace("OpenClaw", "Hermes").strip()
+    for path in (target / "SOUL.md", workspace_target / "AGENTS.md", target / "memories" / "USER.md"):
+        assert path.read_text(encoding="utf-8-sig").strip() == expected
+    entries = mod.parse_existing_memory_entries(existing_memory)
+    assert entries == [existing, expected, "Hermes backed up /srv/openclaw/state.sqlite."]
+    assert all(path.read_bytes() == before for path, before in originals.items())
+    assert report["summary"]["error"] == report["summary"]["conflict"] == 0
 
 
 

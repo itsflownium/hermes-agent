@@ -515,24 +515,27 @@ def backup_existing(path: Path, backup_root: Path) -> Optional[Path]:
 # memory entries, user profiles, SOUL.md, and workspace instructions
 # read as self-referential to the new agent identity.
 #
-# Case-preserving: ``OpenClaw`` → ``Hermes`` (prose), but lowercase matches
-# like ``openclaw`` → ``hermes`` (so filesystem paths like ``~/.openclaw``
-# become ``~/.hermes`` — the real Hermes home — not the broken ``~/.Hermes``).
+# Paths and identifiers are historical data, not brand mentions. Keep them
+# intact, including Windows paths, usernames, filenames and code literals.
+# A sentence-ending period or prose colon is still eligible for rebranding.
 _REBRAND_PATTERNS: List[Tuple[re.Pattern, str]] = [
-    (re.compile(r'\bOpen[\s-]?Claw\b', re.IGNORECASE), 'Hermes'),
-    (re.compile(r'\bClawdBot\b', re.IGNORECASE), 'Hermes'),
-    (re.compile(r'\bMoltBot\b', re.IGNORECASE), 'Hermes'),
+    (
+        re.compile(
+            r'(?<![\w./\\@~`$%:-])' + brand + r'(?![\w/\\@~`$%-]|\.\w|:\S)',
+            re.IGNORECASE,
+        ),
+        'Hermes',
+    )
+    for brand in (r'Open[ -]?Claw', r'ClawdBot', r'MoltBot')
 ]
+_REBRAND_CODE_PATTERN = re.compile(r'(?P<delimiter>`+|~{3,})[\s\S]*?(?P=delimiter)')
 
 
 def _case_preserving_replacement(replacement: str):
     """Return a re.sub replacement fn that lowercases the result when the
     matched text was all-lowercase.
 
-    Keeps ``OpenClaw`` → ``Hermes`` but maps ``openclaw`` → ``hermes`` so a
-    filesystem path like ``~/.openclaw/config.yaml`` rewrites to
-    ``~/.hermes/config.yaml`` (the real Hermes home) instead of the broken
-    ``~/.Hermes/config.yaml``.
+    Keeps ``OpenClaw`` → ``Hermes`` and ``openclaw`` → ``hermes`` in prose.
     """
     def _sub(match: "re.Match[str]") -> str:
         matched = match.group(0)
@@ -545,12 +548,20 @@ def _case_preserving_replacement(replacement: str):
 def rebrand_text(text: str) -> str:
     """Replace OpenClaw / ClawdBot / MoltBot brand names with Hermes.
 
-    Preserves case so filesystem-path matches (lowercase) don't become
-    capitalized directory names that don't exist.
+    Rewrites standalone prose mentions while preserving paths and identifiers.
     """
-    for pattern, replacement in _REBRAND_PATTERNS:
-        text = pattern.sub(_case_preserving_replacement(replacement), text)
-    return text
+    def rewrite_prose(prose: str) -> str:
+        for pattern, replacement in _REBRAND_PATTERNS:
+            prose = pattern.sub(_case_preserving_replacement(replacement), prose)
+        return prose
+
+    parts: List[str] = []
+    offset = 0
+    for literal in _REBRAND_CODE_PATTERN.finditer(text):
+        parts.extend((rewrite_prose(text[offset:literal.start()]), literal.group(0)))
+        offset = literal.end()
+    parts.append(rewrite_prose(text[offset:]))
+    return "".join(parts)
 
 
 def parse_existing_memory_entries(path: Path) -> List[str]:
