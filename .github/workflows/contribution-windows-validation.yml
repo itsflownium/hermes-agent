@@ -1,0 +1,21 @@
+name: Manual backend Windows validation
+on:
+  push:
+    branches: [test/windows-dashboard-respawn-ci]
+permissions:
+  contents: read
+jobs:
+  native-windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a # v7.0.1
+      - name: Prepare locked test environment
+        uses: ./.github/actions/setup-pm
+        with:
+          extras: '[]'
+          test-environment: 'true'
+      - name: Run native process regression tests
+        shell: bash
+        run: |
+          HERMES_TEST_FILE_RETRIES=0 scripts/run_tests.sh tests/hermes_cli/test_dashboard_respawn_windows_live.py -q
