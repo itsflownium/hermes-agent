@@ -79,7 +79,6 @@ import { notifyError } from '@/store/notifications'
 import {
   $newChatProfile,
   $profileColors,
-  $profiles,
   $profileScope,
   ALL_PROFILES,
   messagingTotalsKey,
@@ -491,7 +490,6 @@ export function ChatSidebar({
   const sessionsLoadError = useStore($sessionsLoadError)
   const sessionProfilesTruncated = useStore($sessionProfilesTruncated)
   const unreadCount = useStore($unreadFinishedSessionIds).length
-  const profiles = useStore($profiles)
   const profileScope = useStore($profileScope)
   const activeConnectionId = useStore($activeConnectionId)
 
@@ -508,13 +506,7 @@ export function ChatSidebar({
     markSessionUnread(storedId, row.unread !== true).catch(err => notifyError(err, s.row.unreadFailed))
   }
 
-  // Only surface the profile switcher when more than one profile exists, so
-  // single-profile users see the unchanged sidebar.
-  const multiProfile = profiles.length > 1
-  // Gate ALL-profiles grouping on multiProfile too: if a user drops back to one
-  // profile while scope is still ALL (persisted), the rail is hidden and they'd
-  // otherwise be stuck in the grouped view with no way out.
-  const showAllProfiles = multiProfile && profileScope === ALL_PROFILES
+  const showAllProfiles = profileScope === ALL_PROFILES
   const messagingProfile = sidebarProfileForScope(profileScope)
   const agentOrderIds = useStore($sidebarSessionOrderIds)
   const agentOrderManual = useStore($sidebarSessionOrderManual)

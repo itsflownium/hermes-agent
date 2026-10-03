@@ -63,7 +63,7 @@ vi.mock('@/store/profile', () => ({
   $profileOrder: atom([]),
   $profiles: atom([{ is_default: true, name: 'default' }]),
   $profileScope: atom('default'),
-  $showAllProfiles: atom(false),
+  $canShowAllProfiles: atom(false),
   ALL_PROFILES: '*',
   normalizeProfileKey: (name: string) => name,
   profileLabel: (profile: { display_name?: string; name: string }) =>

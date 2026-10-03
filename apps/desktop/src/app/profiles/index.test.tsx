@@ -47,6 +47,7 @@ vi.mock('@/store/gateway', () => ({
 
 const {
   $activeGatewayProfile: activeGateway,
+  $canShowAllProfiles,
   $profileColors,
   $showAllProfiles
 } = vi.hoisted(() => {
@@ -54,6 +55,7 @@ const {
 
   return {
     $activeGatewayProfile: atom<string>('default'),
+    $canShowAllProfiles: atom<boolean>(false),
     $profileColors: atom<Record<string, string>>({}),
     $showAllProfiles: atom<boolean>(false)
   }
@@ -61,10 +63,13 @@ const {
 
 vi.mock('@/store/profile', () => ({
   $activeGatewayProfile: activeGateway,
+  $canShowAllProfiles,
   $profileColors,
   // `session-states` -> `preview` -> `layout` reaches this mock now that the
   // right rail is scoped per profile; layout.ts derives its grouping from it.
   $showAllProfiles,
+  $profileScope: activeGateway,
+  ALL_PROFILES: '__all__',
   normalizeProfileKey: (name: null | string | undefined) => (name ?? '').trim() || 'default',
   profileLabel: (profile: { display_name?: string; name: string }) =>
     (profile.display_name ?? '').trim() || profile.name,

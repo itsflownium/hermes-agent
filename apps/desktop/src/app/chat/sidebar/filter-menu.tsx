@@ -26,6 +26,7 @@ import {
   $sidebarCardRows,
   $sidebarFiltersActive,
   $sidebarGrouping,
+  $sidebarGroupingOptions,
   $sidebarListGroupIds,
   $sidebarOrdering,
   $sidebarPrFilter,
@@ -44,7 +45,6 @@ import {
   setSidebarShowAllSessions,
   setSidebarShowArchived,
   setWorkspaceNodesOpen,
-  SIDEBAR_GROUPING_ORDER,
   type SidebarGrouping,
   type SidebarOrdering,
   type SidebarRowMeta,
@@ -56,7 +56,8 @@ import {
 } from '@/store/layout'
 import {
   $profiles,
-  $showAllProfiles,
+  $profileScope,
+  ALL_PROFILES,
   normalizeProfileKey,
   requestProfileCreate,
   toggleShowAllProfiles
@@ -124,7 +125,10 @@ export function SidebarFilterMenu({ className }: { className?: string }) {
     status: { icon: 'pulse', label: f.status }
   }
 
-  const GROUPINGS: Option<SidebarGrouping>[] = SIDEBAR_GROUPING_ORDER.map(id => ({ id, ...GROUPING_OPTIONS[id] }))
+  const GROUPINGS: Option<SidebarGrouping>[] = useStore($sidebarGroupingOptions).map(id => ({
+    id,
+    ...GROUPING_OPTIONS[id]
+  }))
 
   const ORDERINGS: Option<SidebarOrdering>[] = [
     { icon: 'clock', id: 'updated', label: f.updated },
@@ -169,7 +173,7 @@ export function SidebarFilterMenu({ className }: { className?: string }) {
   const statusFilter = useStore($sidebarStatusFilter)
   const projectFilter = useStore($sidebarProjectFilter)
   const profileFilter = useStore($sidebarProfileFilter)
-  const showAllProfiles = useStore($showAllProfiles)
+  const showAllProfiles = useStore($profileScope) === ALL_PROFILES
   const profileNames = useStore($profiles).map(profile => normalizeProfileKey(profile.name))
   const narrowsByProfile = showAllProfiles && profileNames.length > 1
   const prFilter = useStore($sidebarPrFilter)

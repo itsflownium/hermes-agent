@@ -25,7 +25,7 @@ import { modeBound, modeLayout } from '@/store/interface-mode'
 
 import { trackArea } from './desktop-metrics'
 import { $paneStates, ensurePaneRegistered, setPaneOpen, setPaneWidthOverride } from './panes'
-import { $showAllProfiles, setShowAllProfiles } from './profile'
+import { $canShowAllProfiles, $profileScope, ALL_PROFILES, setShowAllProfiles } from './profile'
 import type { PullRequestBucket } from './pull-requests'
 import type { SessionStatusBucket } from './session-dot-state'
 
@@ -263,8 +263,8 @@ const $sidebarAllProfilesAgentsGrouped = persistentAtom(
 /** Whether the CURRENT scope shows the project tree (reads the scope's own
  *  flag, so each workspace and the all-profiles view remember it separately). */
 export const $sidebarAgentsGrouped: ReadableAtom<boolean> = computed(
-  [$showAllProfiles, $sidebarFlatAgentsGrouped, $sidebarAllProfilesAgentsGrouped],
-  (showAll, flat, allProfiles) => (showAll ? allProfiles : flat)
+  [$profileScope, $sidebarFlatAgentsGrouped, $sidebarAllProfilesAgentsGrouped],
+  (scope, flat, allProfiles) => (scope === ALL_PROFILES ? allProfiles : flat)
 )
 
 /** How the recents list is divided. `date` is the sidebar's long-standing
@@ -274,6 +274,9 @@ export const SIDEBAR_GROUPING_ORDER = ['date', 'project', 'status', 'profile'] a
 /** Derived from the order so a new grouping cannot exist without a slot in the
  *  filter menu and the `view.cycleSidebarGrouping` keybind, which both walk it. */
 export type SidebarGrouping = (typeof SIDEBAR_GROUPING_ORDER)[number]
+export const $sidebarGroupingOptions = computed($canShowAllProfiles, canShowAll =>
+  canShowAll ? SIDEBAR_GROUPING_ORDER : SIDEBAR_GROUPING_ORDER.filter(grouping => grouping !== 'profile')
+)
 /** What ranks rows within whatever grouping is active. */
 export type SidebarOrdering = 'cost' | 'created' | 'manual' | 'status' | 'tokens' | 'updated'
 /** The sort keys the menu offers; `manual` is entered by dragging, not picked. */
@@ -403,8 +406,8 @@ export const $sidebarPrFilter = persistentAtom<PullRequestBucket[]>(
 )
 
 export const $sidebarGrouping: ReadableAtom<SidebarGrouping> = computed(
-  [$sidebarAgentsGrouped, $sidebarFlatGrouping, $sidebarAllProfilesGrouping, $showAllProfiles],
-  (grouped, flat, allProfiles, showAll) => (grouped ? 'project' : showAll ? allProfiles : flat)
+  [$sidebarAgentsGrouped, $sidebarFlatGrouping, $sidebarAllProfilesGrouping, $profileScope],
+  (grouped, flat, allProfiles, scope) => (grouped ? 'project' : scope === ALL_PROFILES ? allProfiles : flat)
 )
 
 // A hand-dragged order outranks any sort key — dragging IS how you pick manual,
@@ -744,7 +747,7 @@ export function toggleSidebarMessagingOpen(sourceId: string) {
 
 export function setSidebarAgentsGrouped(grouped: boolean) {
   // Write the flag the current scope reads — see $sidebarAgentsGrouped.
-  ;($showAllProfiles.get() ? $sidebarAllProfilesAgentsGrouped : $sidebarFlatAgentsGrouped).set(grouped)
+  ;($profileScope.get() === ALL_PROFILES ? $sidebarAllProfilesAgentsGrouped : $sidebarFlatAgentsGrouped).set(grouped)
 }
 
 export function setSidebarGrouping(grouping: SidebarGrouping) {
@@ -753,6 +756,10 @@ export function setSidebarGrouping(grouping: SidebarGrouping) {
   // and every write that follows must target that scope, not the one we were
   // in when the click landed. (The flat scope's atom can't hold 'profile'.)
   if (grouping === 'profile') {
+    if (!$canShowAllProfiles.get()) {
+      return
+    }
+
     setShowAllProfiles(true)
     $sidebarAllProfilesAgentsGrouped.set(false)
     $sidebarAllProfilesGrouping.set(grouping)
@@ -766,7 +773,7 @@ export function setSidebarGrouping(grouping: SidebarGrouping) {
     return
   }
 
-  if ($showAllProfiles.get()) {
+  if ($profileScope.get() === ALL_PROFILES) {
     $sidebarAllProfilesGrouping.set(grouping)
 
     return
@@ -776,9 +783,10 @@ export function setSidebarGrouping(grouping: SidebarGrouping) {
 }
 
 export function cycleSidebarGrouping() {
-  const currentIndex = SIDEBAR_GROUPING_ORDER.indexOf($sidebarGrouping.get())
+  const options: readonly SidebarGrouping[] = $sidebarGroupingOptions.get()
+  const currentIndex = options.indexOf($sidebarGrouping.get())
 
-  setSidebarGrouping(SIDEBAR_GROUPING_ORDER[(currentIndex + 1) % SIDEBAR_GROUPING_ORDER.length])
+  setSidebarGrouping(options[(currentIndex + 1) % options.length])
 }
 
 export function setSidebarOrdering(ordering: SidebarOrdering) {

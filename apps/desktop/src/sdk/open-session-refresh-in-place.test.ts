@@ -95,12 +95,17 @@ vi.mock('@/store/profile', async () => {
     }
   ])
 
+  const activeProfile = atom('ops')
+
   return {
-    $activeGatewayProfile: atom('ops'),
+    $activeGatewayProfile: activeProfile,
+    $canShowAllProfiles: atom(false),
     $gatewaySwapTarget: atom(null),
     $hydrationSyncProfile: atom(null),
     $profiles: profiles,
+    $profileScope: activeProfile,
     $showAllProfiles: atom(false),
+    ALL_PROFILES: '__all__',
     ensureGatewayAgent: vi.fn(),
     ensureGatewayProfile: vi.fn(),
     newSessionInAgent: vi.fn(),

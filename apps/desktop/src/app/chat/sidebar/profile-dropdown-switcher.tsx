@@ -33,7 +33,7 @@ import {
   $profileCreateRequest,
   $profileOrder,
   $profiles,
-  $showAllProfiles,
+  $profileScope,
   ALL_PROFILES,
   normalizeProfileKey,
   profileLabel,
@@ -70,7 +70,7 @@ export function ProfileSwitcher({ compact = false }: { compact?: boolean }) {
   const order = useStore($profileOrder)
   const colors = useStore($profileColors)
   const gatewayProfile = useStore($activeGatewayProfile)
-  const showAll = useStore($showAllProfiles)
+  const showAll = useStore($profileScope) === ALL_PROFILES
   const multipleConnections = useStore($hasMultipleConnections)
   const registry = useStore($connectionsRegistry)
   const activeConnectionId = useStore($activeConnectionId)

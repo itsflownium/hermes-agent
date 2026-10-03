@@ -29,7 +29,9 @@ vi.mock('@/store/session-states', () => ({
 vi.mock('@/store/profile', () => ({
   // The layout store reads the sidebar's profile scope; this suite only cares
   // about the fresh-session call.
-  $showAllProfiles: atom(false),
+  $canShowAllProfiles: atom(false),
+  $profileScope: atom('default'),
+  ALL_PROFILES: '__all__',
   requestFreshSession: () => requestFreshSession(),
   setShowAllProfiles: () => {}
 }))

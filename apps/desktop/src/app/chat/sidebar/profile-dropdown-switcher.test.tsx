@@ -41,7 +41,7 @@ vi.mock('@/store/profile', () => ({
     { is_default: true, name: 'default' },
     { is_default: false, name: 'clippy' }
   ]),
-  $showAllProfiles: atom(false),
+  $profileScope: atom('default'),
   ALL_PROFILES: '__all__',
   normalizeProfileKey: (name: string) => name,
   profileLabel: (profile: { name: string }) => profile.name,

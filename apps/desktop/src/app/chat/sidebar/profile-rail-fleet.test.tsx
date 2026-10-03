@@ -90,8 +90,8 @@ vi.mock('@/store/profile', () => ({
   $profiles: atom([{ is_default: true, name: 'default' }]),
   $profileScope: atom('default'),
   // The rail's status summary (profile-dot-state) rides the real session
-  // stores, whose import graph reaches $showAllProfiles through layout state.
-  $showAllProfiles: atom(false),
+  // stores, whose import graph reaches the scope capability through layout.
+  $canShowAllProfiles: atom(false),
   ALL_PROFILES: '*',
   normalizeProfileKey: (name: string) => name,
   profileLabel: (profile: { display_name?: string; name: string }) =>

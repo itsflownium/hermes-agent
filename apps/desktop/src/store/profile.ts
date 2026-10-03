@@ -15,7 +15,7 @@ import {
   storedStringRecord
 } from '@/lib/storage'
 import { withTimeout } from '@/lib/with-timeout'
-import { registryConnectionKind } from '@/store/connection-registry-state'
+import { $connectionsRegistry, registryConnectionKind } from '@/store/connection-registry-state'
 import {
   $gateway,
   activeGatewayConnectionId,
@@ -938,8 +938,7 @@ export const messagingTotalsKey = (messagingProfile: string, sourceId: string): 
 const SHOW_ALL_PROFILES_STORAGE_KEY = 'hermes.desktop.showAllProfiles'
 
 // Opt-in unified view. When false, scope follows the live gateway profile.
-// $profileScope also ignores the flag at exactly one profile (nothing to
-// unite), so single-profile users stay unaffected even if the flag got set.
+// The flag remembers intent; consumers read $profileScope for the live scope.
 export const $showAllProfiles = atom<boolean>(storedBoolean(SHOW_ALL_PROFILES_STORAGE_KEY, false))
 
 $showAllProfiles.subscribe(value => persistBoolean(SHOW_ALL_PROFILES_STORAGE_KEY, value))
@@ -950,18 +949,17 @@ $showAllProfiles.subscribe(value => persistBoolean(SHOW_ALL_PROFILES_STORAGE_KEY
 // whole sidebar with it — a real context switch, not a separate filter to keep
 // in sync.
 //
-// "All profiles" only exists with more than one profile to unite. The flag is
-// reachable at one profile (Grouping → Profile, or persisted from a
-// two-profile era), and honoring it there poisons every profile-scoped writer
-// — projects.* throws (#101642, #94430, #94738) — while the sidebar itself
-// renders flat (index.tsx already exempts single-profile from ALL). So the
-// scope collapses to the gateway profile at exactly one profile, matching the
-// rendering exemption at the single source of truth. The flag stays persisted,
-// so a second profile restores the unified view. An empty list means "not
-// loaded yet": keep honoring the flag so a multi-profile boot doesn't flicker
-// scope profile → all → as the list lands.
-export const $profileScope = computed([$showAllProfiles, $activeGatewayProfile, $profiles], (showAll, gateway, profiles) =>
-  showAll && profiles.length !== 1 ? ALL_PROFILES : normalizeProfileKey(gateway)
+// $profiles is only the active gateway's roster. Two gateways with one profile
+// each still have two owners to group. Keep an empty roster in the loading
+// state, and preserve the saved intent when only one owner remains (#101642).
+export const $canShowAllProfiles = computed(
+  [$profiles, $connectionsRegistry],
+  (profiles, registry) => profiles.length !== 1 || (registry?.connections.length ?? 0) > 1
+)
+
+export const $profileScope = computed(
+  [$showAllProfiles, $activeGatewayProfile, $canShowAllProfiles],
+  (showAll, gateway, canShowAll) => (showAll && canShowAll ? ALL_PROFILES : normalizeProfileKey(gateway))
 )
 
 // Switch the active context to `name`: leave "All profiles" mode, point new
