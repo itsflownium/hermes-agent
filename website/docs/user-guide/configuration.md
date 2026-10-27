@@ -1341,6 +1341,10 @@ agent:
 
 The evidence that feeds this guard (which test/lint/build commands ran, which files were edited since) lives in `~/.hermes/verification_evidence.db`. That ledger is only written or created while the guard is enabled; with `verify_on_stop: false` nothing is recorded and an existing file can be deleted freely.
 
+Local foreground checks and `hermes verify` bind their evidence to workspace content before and after execution. A successful command leaves verification stale if inputs changed during the run or after it. Full passing `hermes verify` evidence can satisfy another session only while the content still matches. Remote terminal paths do not acquire proof from similarly named files on the host, and incomplete or unreadable content scans remain unverified.
+
+Targeted checks prove their explicitly selected paths. A passing test for component A does not clear an edit to component B; filters, suite slices and unknown command options do not establish a full workspace pass. Use an unfiltered canonical command when the selected paths do not cover the edited code. The existing temporary-script fallback remains available for projects without a canonical verification command and stays labeled ad-hoc. Older ledger entries without content fingerprints require a fresh check.
+
 For a user/plugin policy gate at the same point — keep the agent going with your own checks — see the [`pre_verify` hook](./features/hooks.md#pre_verify).
 
 ## Standing Goals (`/goal`)
@@ -2130,6 +2134,30 @@ The injected block covers:
 
 The gate is independent of `tool_use_enforcement` — either can be on without the other. The guidance is chosen once at session start keyed on the model name, so the system prompt stays byte-stable (and prompt-cache-friendly) for the life of the conversation. Gemini/Gemma are excluded from the auto list because they receive the more specific Google operational guidance; Claude is excluded because it doesn't exhibit these failure modes — opt any model in with `true` or a substring list.
 
+## Checklist completion checks
+
+When the agent changes `todo_list` during a turn and then tries to finish with
+pending or in-progress items, Hermes gives it one bounded continuation to review
+the outstanding deliverables. The note is appended to the conversation; earlier
+prompt bytes and tool schemas stay unchanged. Historical lists that were only
+read do not trigger this check. Cancelled items are not unfinished work.
+
+```yaml
+agent:
+  todo_completion_nudges: 1  # 0 disables; integers above 3 are capped at 3
+```
+
+`agent.task_completion_guidance: false` also disables the continuation. The check
+does not extend the iteration budget or grant permissions. If that budget ends
+while the checklist remains unfinished, Hermes reports the remaining item IDs
+instead of reusing the premature completion claim. A turn result's
+`task_checklist` field is a self-report, with `completion_verified: false`; it is
+not proof that an artifact or external action passed acceptance checks.
+
+Checklist writes above 256 unique items now fail without changing the existing
+list or revision, instead of silently dropping items. A whitespace-only content
+merge is also rejected atomically. Remove older items before adding more.
+
 ## Tool-Loop Guardrails
 
 Hermes detects when the agent is stuck in an unproductive tool-calling loop — the same tool call failing repeatedly, the same tool failing over and over, or an idempotent call returning the same result with no progress. By default it injects a **warning** into the tool result so the model self-corrects. Interactive CLI, TUI, Desktop, and ACP sessions remain warning-only because a person can intervene; unattended gateway and cron sessions enable hard stops by default.
@@ -2158,7 +2186,8 @@ tool_loop_guardrails:
 
 Hard stops are designed to catch **replays** — the same call, unchanged, with nothing happening in between — not legitimate iteration:
 
-- **Edit → re-run is never a loop.** Any successful mutating call (`write_file`, `patch`, a green `terminal`/`execute_code`, a browser action, a job/message/cron mutation) marks progress for every failing call still being counted. The next identical retry (re-running a red test after a fix, re-snapshotting after a click) starts a fresh streak instead of accumulating toward a block.
+- **Edit → re-run stays allowed.** Successful file repairs, execution, browser actions and delegation mark progress for failing calls still being counted. The next identical retry (re-running a red test after a fix, re-snapshotting after a click) starts a fresh streak instead of accumulating toward a block.
+- **Bookkeeping recovery is scoped.** Task-list, memory, skill, messaging and schedule updates reset only their related tool-family failures. Removing a memory can free room for a failed memory add, but updating a todo cannot replenish an unrelated failing API call's allowance.
 - **Distinct red commands are diagnosis, not a loop.** For tools whose non-zero exit is ordinary output (`terminal`, `execute_code`, process pollers, `browser_exec`, `web_extract`) the `same_tool_failure` threshold only warns and never halts. Only an exact-args replay with no intervening change, or an identical-result streak, can stop them.
 - **A halt ends the turn, not the session.** The agent replies with which guardrail fired and why; replying "continue" resumes with fresh per-turn counters.
 
@@ -3054,6 +3083,7 @@ delegation:
   #     provider:
   #       sort: throughput
   max_concurrent_children: 3                # Parallel children per batch (floor 1, no ceiling). Also via DELEGATION_MAX_CONCURRENT_CHILDREN env var.
+  shared_iteration_limit: 0                 # Optional ordinary-loop ceiling across the parent and descendants; 0 preserves independent budgets.
   worktree_isolation: false                 # Give each child its own git worktree branched from HEAD (local backend + git repos only; inspired by Muse Code). See Subagent Delegation → Worktree Isolation.
   max_spawn_depth: 1                        # Delegation tree depth cap (1-3, clamped). 1 = flat (default): parent spawns leaves that cannot delegate. 2 = orchestrator children can spawn leaf grandchildren. 3 = three levels.
   orchestrator_enabled: true                # Global kill switch. When false, role="orchestrator" is ignored and every child is forced to leaf regardless of max_spawn_depth.

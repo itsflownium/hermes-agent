@@ -44,12 +44,13 @@ def run_verify_command(args) -> int:
         return 0
 
     phases = tuple(args.phase) if args.phase else None
+    snapshot = _start_evidence(root)
     result = run_verify(
         root, recipe, phases=phases, phase_timeout=args.timeout, ready_timeout=args.ready_timeout,
         skip_start=args.skip_start, port_override=args.port,
     )
 
-    _record_evidence(root, recipe, result, partial=bool(phases or args.skip_start))
+    _record_evidence(root, recipe, result, partial=bool(phases or args.skip_start), snapshot=snapshot)
 
     if args.json:
         payload = result.to_dict()
@@ -80,7 +81,17 @@ def _merge_project_facts_commands(root: Path, recipe) -> None:
             existing.add(command)
 
 
-def _record_evidence(root: Path, recipe, result, *, partial: bool) -> None:
+def _start_evidence(root: Path) -> dict | None:
+    try:
+        from agent.verification_evidence import begin_verification
+
+        snapshot = begin_verification(cwd=root)
+        return snapshot if snapshot is not None else {"fingerprint": None, "reason": "verification was disabled at command start"}
+    except (ImportError, OSError, ValueError, RuntimeError):
+        return {"fingerprint": None, "reason": "verification inputs could not be captured at command start"}
+
+
+def _record_evidence(root: Path, recipe, result, *, partial: bool, snapshot: dict | None = None) -> None:
     """Record the completed run into the verification evidence ledger.
 
     Fail-silent: a ledger problem must never change the CLI's exit code or output. ``partial``
@@ -100,6 +111,7 @@ def _record_evidence(root: Path, recipe, result, *, partial: bool) -> None:
             command="hermes verify",
             scope="targeted" if partial else "full",
             output="\n".join(tails),
+            snapshot=snapshot,
         )
     except Exception:
         pass

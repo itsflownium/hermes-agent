@@ -358,6 +358,13 @@ model:
 #   #     only: ["openai"]
 #   #   "anthropic/claude-fable-5.1":
 #   #     only: ["anthropic"]
+#   #     sort: {by: price, partition: model}
+#   #     preferred_min_throughput: {p50: 30, p90: 15}  # soft preference, tokens/sec
+#   #     preferred_max_latency: 3   # soft preference, seconds
+#   #     max_price: {prompt: 2, completion: 8}  # dollars per million tokens
+#   #     allow_fallbacks: false     # OpenRouter endpoint fallbacks, not Hermes' chain
+#   #     zdr: true
+#   #     quantizations: [fp8, bf16]
 
 # =============================================================================
 # OpenRouter Response Caching (only applies when using OpenRouter)

@@ -209,7 +209,7 @@ class MemoryProvider(ABC):
         """Write non-secret setup ``values`` to the provider's native config. Plugins MUST either
         override this or use only env vars (every schema field carrying ``env_var``)."""
 
-    def on_memory_write(self, action: str, target: str, content: str, metadata: Optional[dict[str, Any]] = None) -> None:
+    def on_memory_write(self, action: str, target: str, content: str, metadata: Optional[dict[str, Any]] = None) -> bool | dict[str, Any] | None:
         """Mirror a built-in memory-tool write (``action``: add | replace | remove; ``target``:
         memory | user; ``metadata``: provenance such as write_origin, session_id, tool_name).
         For replace/remove, ``metadata["previous_content"]`` is the full entry selected
@@ -217,6 +217,11 @@ class MemoryProvider(ABC):
         ``content`` is the whole entry after the edit. Notifications follow a successful complete write
         or batch; each batch operation sees the preceding operation's result. Older
         callers may omit this field: ``old_text`` alone is not authoritative identity.
+
+        Legacy None returns are unconfirmed notifications. Providers may explicitly
+        acknowledge the callback with True or {"success": True}, or reject with
+        False / {"success": False}. Acknowledgment does not certify global erasure
+        from active context, backups or unrelated derived stores.
         """
 
     def backup_paths(self) -> list[str]:

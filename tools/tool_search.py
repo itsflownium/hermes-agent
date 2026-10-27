@@ -26,6 +26,7 @@ from tools.tool_search_catalog import (
 from tools.tool_search_validation import (
     local_batch_error, normalize_tool_call_entries, not_deferrable_error, session_unavailable_error,
     unavailable_in_session_reason, validate_deferred_call_args)
+from tools.tool_search_results import SearchResultProjection
 from tools.connectors import CONNECTOR_BATCH_SENTINEL, is_connector_name
 from tools.connectors.search import (
     connections_in_scope, connector_entries_by_group, connectors_unavailable, remote_schemas_for)
@@ -244,8 +245,9 @@ def _search_description(deferred_count: int, listing: Optional[str], listing_for
     desc = (
         (f"Search {deferred_count} additional tools that are loaded on demand. "
          if deferred_count else "Search remote connector tools (email, calendars, issue trackers, and more). ")
-        + "Send one keyword query per capability you need; returns matching tool names "
-        f"and descriptions. Then `{TOOL_DESCRIBE_NAME}` loads schemas and `{TOOL_CALL_NAME}` "
+        + "Send one keyword query per capability you need; returns matching tool names, "
+        "descriptions and bounded schemas for strong local matches. "
+        f"Use `{TOOL_DESCRIBE_NAME}` when parameters are omitted; `{TOOL_CALL_NAME}` "
         "invokes. Tools already in your tool list need no search."
         + (_CONNECTIONS_HINT if connections_granted else ""))
     if not listing:
@@ -281,7 +283,7 @@ def bridge_tool_schemas(deferred_count: int, listing: Optional[str] = None,
                 "queries": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "One query per capability: service + action + object keywords (e.g. ['gmail send email', 'github create issue']), never a question; every word must match tool text. Searched in parallel.",
+                    "description": "One query per capability: service + action + object keywords (e.g. ['gmail send email', 'github create issue']). Request wrappers are ignored; substantive words must match tool text. Searched in parallel.",
                 },
                 "limit": {
                     "type": "integer",
@@ -308,7 +310,7 @@ def bridge_tool_schemas(deferred_count: int, listing: Optional[str] = None,
             TOOL_CALL_NAME,
             "Invoke deferred tools: `calls` is an array of {name, arguments}, one entry per "
             "invocation (batch independent calls; results come back in order). Arguments match "
-            f"the schema from `{TOOL_DESCRIBE_NAME}`; approvals and hooks apply as usual.",
+            f"the parameters returned by search or `{TOOL_DESCRIBE_NAME}`; approvals and hooks apply as usual.",
             {
                 "calls": {
                     "type": "array",
@@ -455,13 +457,13 @@ def dispatch_tool_search(args: dict[str, Any], *, current_tool_defs: list[dict[s
         remote_entries, hosted_failure = connector_entries_by_group(
             queries, connector_search=connector_search, call=call)
     results: list[dict[str, Any]] = []
-    tools_map: dict[str, dict[str, Any]] = {}
+    projection = SearchResultProjection()
+    tools_map = projection.tools
     available_sources = _available_source_summary(catalog)
     for position, query in enumerate(queries):
         corpus = catalog + remote_entries[position]
         hits = search_catalog(corpus, query, limit=limit)
-        for h in hits:
-            tools_map.setdefault(h.name, _shared_tool_record(h))
+        projection.add(hits, query)
         matches = [h.name for h in hits]
         group: dict[str, Any] = {"query": query, "matches": matches}
         if not matches and available_sources:

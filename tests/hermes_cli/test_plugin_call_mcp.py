@@ -155,6 +155,44 @@ def test_structured_content_passthrough(monkeypatch):
     assert result["structuredContent"] == {"hits": 3}
 
 
+@pytest.mark.parametrize("failed", [False, True])
+@pytest.mark.parametrize("value", ["row-7", None, 0, False])
+def test_result_details_survive_the_plugin_envelope(monkeypatch, failed, value):
+    _patch_config(monkeypatch, {"my-plugin": {"mcp_allowlist": ["rag"]}})
+    payload = {"error" if failed else "result": "conflict" if failed else "finished",
+               "structuredContent": value, "_meta": {"com.example/revision": "rev-7"}}
+    _patch_handler(monkeypatch, json.dumps(payload))
+    ctx = _make_ctx()
+    result = ctx.call_mcp("rag", "query")
+    assert result == {"ok": not failed, **payload}
+    assert type(result["structuredContent"]) is type(value)
+    _patch_handler(monkeypatch, '{"result": "next call"}')
+    assert ctx.call_mcp("rag", "query") == {"ok": True, "result": "next call"}
+
+
+@pytest.mark.parametrize("failed", [False, True])
+def test_structured_truncation_is_not_lost_in_the_plugin_envelope(monkeypatch, failed):
+    _patch_config(monkeypatch, {"my-plugin": {"mcp_allowlist": ["rag"]}})
+    payload = {"error" if failed else "result": "oversized", "structuredContentTruncated": True}
+    _patch_handler(monkeypatch, json.dumps(payload))
+    assert _make_ctx().call_mcp("rag", "query") == {"ok": not failed, **payload}
+
+
+@pytest.mark.parametrize("large_field", ["error", "structuredContent"])
+def test_truncation_keeps_error_classification(monkeypatch, large_field):
+    _patch_config(monkeypatch, {"my-plugin": {"mcp_allowlist": ["rag"]}})
+    # Put error last too: its meaning does not depend on JSON key order.
+    payload = {"structuredContent": {"id": "row-7"}, "error": "conflict"}
+    payload[large_field] = "x" * (PluginContext._MCP_RESULT_CHAR_CAP + 500)
+    _patch_handler(monkeypatch, json.dumps(payload))
+    result = _make_ctx().call_mcp("rag", "query")
+    assert result["ok"] is False
+    assert result["truncated"] is True
+    assert len(result["error"]) <= PluginContext._MCP_RESULT_CHAR_CAP + 20
+    if large_field != "error":
+        assert result["error"] == "conflict"
+
+
 # ---------------------------------------------------------------------------
 # Timeout handling
 # ---------------------------------------------------------------------------

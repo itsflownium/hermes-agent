@@ -742,23 +742,19 @@ class MemoryManager:
         return "positional" if accepted >= 4 else "legacy"
 
     def on_memory_write(self, action: str, target: str, content: str,
-                        metadata: Optional[dict[str, Any]] = None) -> None:
+                        metadata: Optional[dict[str, Any]] = None) -> list[dict[str, Any]]:
         """Notify external providers when the built-in memory tool writes (skips builtin, the source)."""
         if not self._owner_allows("on_memory_write"):
-            return
+            return [{"status": "refused", "reason": "profile_scope_mismatch"}]
         content, metadata = _redact_for_provider(content, dict(metadata or {}))
+        from agent.memory_write_receipts import notify_provider
 
-        def _notify(provider: MemoryProvider) -> None:
-            mode = self._provider_memory_write_metadata_mode(provider)
-            if mode == "legacy":
-                provider.on_memory_write(action, target, content)
-            elif mode == "positional":
-                provider.on_memory_write(action, target, content, dict(metadata or {}))
-            else:
-                provider.on_memory_write(action, target, content, metadata=dict(metadata or {}))
+        def _notify(provider: MemoryProvider) -> dict:
+            return notify_provider(provider, self._provider_memory_write_metadata_mode(provider),
+                                   action, target, content, metadata or {})
 
         external = [p for p in self._providers if p.name != "builtin"]
-        self._each_provider("on_memory_write failed", _notify, providers=external)
+        return self._each_provider("on_memory_write failed", _notify, providers=external)
 
     # Actions mirrored to external providers; non-mutating results (errors, staged) are
     # filtered by ``notify_memory_tool_write`` first.
@@ -776,7 +772,7 @@ class MemoryManager:
         return isinstance(result, dict) and result.get("success") is True and result.get("staged") is not True
 
     def notify_memory_tool_write(self, tool_result: Any, tool_args: dict[str, Any], *,
-                                 build_metadata: Optional[Callable[[], dict[str, Any]]] = None) -> None:
+                                 build_metadata: Optional[Callable[[], dict[str, Any]]] = None) -> list[dict[str, Any]]:
         """Mirror a built-in memory tool call to external providers.
 
         Gates on a committed write, expands single-op and batched ``operations`` shapes, keeps only
@@ -785,11 +781,12 @@ class MemoryManager:
         argument: a partial provider registry cannot safely resolve that argument itself.
         """
         if not self._memory_tool_result_succeeded(tool_result):
-            return
+            return []
         result = json.loads(tool_result) if isinstance(tool_result, str) else tool_result
         target = str(tool_args.get("target") or "memory")
         operations = tool_args.get("operations")
         batched = isinstance(operations, list) and bool(operations)
+        receipts = []
         for index, op in enumerate(operations if batched else [tool_args], start=1):
             action = str(op.get("action") or "") if isinstance(op, dict) else ""
             if action not in self._MIRRORED_MEMORY_ACTIONS:
@@ -822,9 +819,13 @@ class MemoryManager:
                     else:
                         after = result.get("patched_entry_after")
                     mirrored_action, content = "replace", str(after or "")
-                self.on_memory_write(mirrored_action, target, content, metadata=metadata)
+                providers = self.on_memory_write(mirrored_action, target, content, metadata=metadata)
+                receipts.append({"operation": index, "action": action, "target": target,
+                                 "providers": providers if isinstance(providers, list) else [{"status": "unconfirmed"}]})
             except Exception as e:
-                logger.debug("notify_memory_tool_write failed for op %s: %s", action, e)
+                receipts.append({"operation": index, "action": action, "status": "failed", "error_class": type(e).__name__})
+                logger.warning("Memory write propagation did not complete for %s (%s)", action, type(e).__name__)
+        return receipts
 
     def on_delegation(self, task: str, result: str, *, child_session_id: str = "", **kwargs) -> None:
         if not self._owner_allows("on_delegation"):

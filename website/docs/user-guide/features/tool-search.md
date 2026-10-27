@@ -68,11 +68,23 @@ Each query in a `tool_search` call is searched independently against the
 same catalog (`limit` applies per query); the per-query groups carry tool
 names only, while the shared `tools` map holds each matched tool's
 description and required parameter names once. Queries are stemmed, so
-"issues" finds `create_issue`. Each query group that returns no matches
+"issues" finds `create_issue`. Request wrappers such as "please", "could you"
+and "for me" are ignored; unknown service names and other substantive terms
+still produce no matches. Each query group that returns no matches
 includes an `available_sources` summary of the connected servers so a lexical
 miss is not mistaken for a missing capability.
 `tool_describe` resolves every requested name in one call; unknown names
 are reported in `not_found` without failing the rest of the batch.
+
+Strong local matches also include their intact `parameters` schema. A match is
+strong when the query names the tool exactly or contains every stemmed term in
+its qualified name. Each search call includes at most three schemas and 16 KiB
+of schema JSON measured as UTF-8. Large schemas are omitted whole, leaving room
+for smaller ones. Repeated hits share one record, which a later strong query
+can promote. A record without `parameters` includes a `schema_hint` directing
+the model to `tool_describe`; hosted connector results still use that step.
+When `parameters` is present, the model can call the tool without a separate
+describe call. Discovery never fetches additional remote schemas.
 
 When the model invokes `tool_call`, Hermes **unwraps the bridge** and
 dispatches the underlying tool exactly as if the model had called it
@@ -309,7 +321,13 @@ to any progressive-disclosure design, not specific to this implementation:
 - **Catalog is stateless across turns.** It rebuilds from the current
   tool-defs list every assembly — no session-keyed `Map`. This avoids
   the class of bug where a stored catalog drifts out of sync with the
-  live tool registry.
+  live tool registry. Bounded immutable tokenization results are cached by
+  exact text, so edited descriptions and parameter names get new tokens;
+  catalog entries, schemas and rankings are rebuilt from live definitions.
+  Source labels use one fresh registry snapshot per build, with the active
+  profile and session overlays; registry scope resolution does not repeat
+  for every tool. The snapshot scans the active registry once even when
+  the caller supplies a smaller tool subset.
 - **The catalog is scoped to the session's toolsets.** `tool_search`,
   `tool_describe`, and `tool_call` only ever see and invoke tools the
   session was actually granted. A subagent, kanban worker, or gateway

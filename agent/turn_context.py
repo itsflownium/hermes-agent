@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 from agent.conversation_compression import recover_rotated_compression_session
-from agent.iteration_budget import IterationBudget
+from agent.task_budget import reset_iteration_budget
 from agent.memory_context import build_memory_context_block
 from agent.memory_provider import is_trivial_prompt
 from agent.message_content import flatten_message_text
@@ -615,6 +615,9 @@ _PER_TURN_RESET_STATE: tuple[tuple[str, Any], ...] = (
     ("_iteration_budget_warning_injected", False),
     ("_run_budget_wrapup_injected", False), ("_verification_stop_nudges", 0),
     ("_pre_verify_nudges", 0), ("_lsp_turn_end_notes", 0),
+    ("_todo_written_this_turn", False), ("_todo_completion_nudges", 0),
+    ("_artifact_completion_reviewed", False),
+    ("_turn_terminal_completed", False),
 )
 
 
@@ -657,7 +660,7 @@ def _reset_per_turn_agent_state(agent: Any) -> None:
         # gateway: init ran before this turn's callbacks / viewer print sink
         agent._replay_startup_warnings()
 
-    agent.iteration_budget = IterationBudget(agent.max_iterations)
+    agent.iteration_budget = reset_iteration_budget(agent)
     # Wall-clock run budget: stamped only when configured (one wrap-up notice per run).
     agent._run_budget_started_at = (
         time.time() if getattr(agent, "run_budget_seconds", None) else None
@@ -856,6 +859,12 @@ def _collect_pre_llm_call_context(
     return ""
 
 
+def _stage_changed_context_notes(agent: Any, prompt: Any, messages: Any) -> None:
+    from agent.memory_delta import stage_native_memory_note
+    stage_skills_index_note(agent, prompt, messages)
+    stage_native_memory_note(agent, prompt, messages)
+
+
 def _merge_gateway_notes(
     agent: Any, messages: list[Any], current_turn_user_idx: int, plugin_user_context: str
 ) -> str:
@@ -867,7 +876,7 @@ def _merge_gateway_notes(
     _turn_notes = "\n\n".join(
         part for part in (consume_gateway_turn_context_notes(agent), pop_plugin_notices(agent),
                           consume_surface_switch_note(agent),
-                          consume_skills_index_note(agent)) if part
+                          consume_skills_index_note(agent), _pop_turn_note(agent, "_native_memory_note")) if part
     )
     if not _turn_notes:
         return plugin_user_context
@@ -1189,7 +1198,7 @@ def build_turn_context(
     )
     # Every turn, not only on a prompt restore: a long-lived agent (CLI, TUI, Desktop) keeps its
     # prompt in memory for the whole conversation and would never re-check its skills index.
-    stage_skills_index_note(agent, active_system_prompt, messages)
+    _stage_changed_context_notes(agent, active_system_prompt, messages)
     plugin_user_context = _merge_gateway_notes(
         agent, messages, current_turn_user_idx, plugin_user_context
     )

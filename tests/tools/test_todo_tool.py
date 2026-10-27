@@ -1,6 +1,7 @@
 """Tests for the todo tool module."""
 
 import json
+import pytest
 
 from tools.todo_tool import TodoStore, todo_tool
 
@@ -182,11 +183,12 @@ class TestTodoStoreBounds:
     def test_item_count_is_bounded(self):
         from tools.todo_tool import MAX_TODO_ITEMS
         store = TodoStore()
-        store.write([
-            {"id": str(i), "content": f"task {i}", "status": "pending"}
-            for i in range(5000)
-        ])
-        assert len(store.read()) == MAX_TODO_ITEMS
+        with pytest.raises(ValueError, match=f"capacity is {MAX_TODO_ITEMS}"):
+            store.write([
+                {"id": str(i), "content": f"task {i}", "status": "pending"}
+                for i in range(5000)
+            ])
+        assert store.read() == []
 
     def test_normal_list_is_unchanged(self):
         """No regression: ordinary plans pass through untouched (no marker,

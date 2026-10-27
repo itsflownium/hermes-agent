@@ -303,7 +303,7 @@ def _build_child_agent(
                     session_db=child_session_db, parent_session_id=parent_sid, request_overrides=request_overrides,
                     session_id=getattr(child_session_db, "reserved_session_id", None),
                     tool_progress_callback=child_progress_cb,
-                    iteration_budget=None,  # fresh budget per subagent
+                    iteration_budget=None,  # local cap; an optional task pool is attached below
                     # A profile route carries that profile's identity (its SOUL.md under the bound home).
                     **({"load_soul_identity": True} if profile_home is not None else {}),
                 )
@@ -321,6 +321,8 @@ def _build_child_agent(
             effective_requested_provider=rt.get("requested_provider"),
         )
     child._print_fn = getattr(parent_agent, "_print_fn", None)
+    from agent.task_budget import inherit_task_budget
+    inherit_task_budget(child, parent_agent)
     _apply_child_cache_ttl(child)
     if child_session_db is not None:
         child._owns_session_db = True  # released by the child's close(), never by the parent

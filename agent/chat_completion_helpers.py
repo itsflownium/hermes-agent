@@ -36,6 +36,7 @@ from agent.chat_completion_headers import _chat_completion_capturing_headers
 from agent.chat_completion_stream_monitor import StreamingWaitMonitor
 from agent.transports.chat_completions import is_router_timeout_shim, router_timeout_shim_may_follow
 from agent.fast_mode import effective_request_overrides
+from agent.provider_routing import validate_sort, validated_advanced_preferences
 from agent.turn_context import substitute_api_content
 from agent.gemini_native_adapter import is_native_gemini_base_url
 # Remote endpoints must never be fingerprinted: the probe waterfall is only valid for local/LM-Studio/Ollama
@@ -57,7 +58,6 @@ from tools.terminal_tool_lifecycle import is_persistent_env
 from utils import base_url_host_matches, base_url_hostname, env_float, env_int
 
 logger = logging.getLogger(__name__)
-_OPENROUTER_PROVIDER_SORT_VALUES = {"throughput", "latency", "price"}
 _PROVIDER_STREAM_ERROR_FINISH_REASONS = {"error", "error_finish"}
 _PROVIDER_STREAM_SSE_FIELDS = {"event", "data", "id", "retry"}
 _PROVIDER_STREAM_ERROR_TEXT_LIMIT = 4096
@@ -452,20 +452,6 @@ def _bound_openai_codex_stale_timeout(stale_timeout: float, est_tokens: int) -> 
     return min(stale_timeout, hard_timeout) if hard_timeout > 0 else stale_timeout
 
 
-def _validated_openrouter_provider_sort(raw_sort: Any) -> Optional[str]:
-    """Return a normalized OpenRouter provider.sort value or None."""
-    if not isinstance(raw_sort, str):
-        return None
-    sort_value = raw_sort.strip().lower()
-    if not sort_value:
-        return None
-    if sort_value in _OPENROUTER_PROVIDER_SORT_VALUES:
-        return sort_value
-    logger.warning("Ignoring invalid OpenRouter provider.sort value %r (allowed: %s)", raw_sort,
-        ", ".join(sorted(_OPENROUTER_PROVIDER_SORT_VALUES)))
-    return None
-
-
 def _provider_preferences_for_agent(agent) -> dict[str, Any]:
     """Build the validated provider-routing object shared by request paths.
 
@@ -482,9 +468,9 @@ def _provider_preferences_for_agent(agent) -> dict[str, Any]:
         _pr = load_config_readonly().get("provider_routing")
         per_model = resolve_per_model_provider_routing(agent.model, (_pr or {}).get("models") if isinstance(_pr, dict) else None)
     merged = {**flat, **{k: v for k, v in per_model.items() if k in flat}}
-    merged["sort"] = _validated_openrouter_provider_sort(merged["sort"])
+    merged["sort"] = validate_sort(merged["sort"])
     merged["require_parameters"] = True if merged["require_parameters"] else None
-    return {key: value for key, value in merged.items() if value}
+    return {**{key: value for key, value in merged.items() if value}, **validated_advanced_preferences(per_model)}
 
 
 def _prompt_cache_scope_for_agent(agent) -> str | None:

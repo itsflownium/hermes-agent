@@ -122,6 +122,8 @@ class TurnExplainersMixin:
         failure time. A later success on the same identity (any spelling) removes the entry.
         No-op when the per-turn state dict is not initialised (tool dispatched outside ``run_conversation``).
         """
+        from agent.task_completion_bot_mode import note_terminal_completion
+        note_terminal_completion(self, tool_name, result, task_id=task_id)
         if tool_name not in _FILE_MUTATING_TOOLS:
             return
         state = getattr(self, "_turn_failed_file_mutations", None)

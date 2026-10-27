@@ -4,6 +4,7 @@ defs plus the budgeted, byte-stable catalog listing embedded in the bridge."""
 from __future__ import annotations
 
 import functools
+import logging
 import math
 import re
 import threading
@@ -12,6 +13,9 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
 import snowballstemmer
+from tools.tool_search_index import corpus_index, exact_positions
+
+logger = logging.getLogger(__name__)
 
 # Reserved bridge names: a user/plugin/MCP tool may not take them (registry override
 # protection rejects such registrations).
@@ -23,7 +27,7 @@ BRIDGE_TOOL_NAMES = frozenset({TOOL_SEARCH_NAME, TOOL_DESCRIBE_NAME, TOOL_CALL_N
 CHARS_PER_TOKEN = 4.0
 
 
-@dataclass
+@dataclass(slots=True)
 class CatalogEntry:
     """One deferrable tool, in a form the bridge tools can search and serve."""
 
@@ -37,6 +41,11 @@ class CatalogEntry:
 
 _TOKEN_RE = re.compile(r"[A-Za-z0-9]+")
 _thread_local = threading.local()
+_CACHED_SEARCH_TEXT_MAX_CHARS = 2048
+_QUERY_PREFIX_RE = re.compile(
+    r"^\s*(?:(?:please|kindly)\s+|(?:can|could|would|will)\s+you\s+)+", re.IGNORECASE
+)
+_QUERY_SUFFIX_RE = re.compile(r"\s+(?:for\s+me|please|kindly)[.!?]*\s*$", re.IGNORECASE)
 
 
 @functools.lru_cache(maxsize=16384)
@@ -49,10 +58,39 @@ def _stem(token: str) -> str:
     return _thread_local.stemmer.stemWord(token)
 
 
+def _token_tuple(text: str) -> tuple[str, ...]:
+    return tuple(_stem(token.lower()) for token in _TOKEN_RE.findall(text))
+
+
+_cached_token_tuple = functools.lru_cache(maxsize=2048)(_token_tuple)
+
+
 def _tokenize(text: str) -> list[str]:
-    """Lowercase alphanumeric tokens, Snowball-stemmed (English); shared by the index and
-    query paths so "issues" matches ``create_issue``."""
-    return [_stem(token.lower()) for token in _TOKEN_RE.findall(text)] if text else []
+    """Stem English tokens; cache bounded immutable text results, never live catalog entries.
+
+    Each caller receives its own list. Changed descriptions and parameter names are new
+    keys, so stateless catalog rebuilds retain current schemas and relevance.
+    """
+    if not text:
+        return []
+    tokens = (
+        _cached_token_tuple(text)
+        if len(text) <= _CACHED_SEARCH_TEXT_MAX_CHARS
+        else _token_tuple(text)
+    )
+    return list(tokens)
+
+
+def _query_tokens(text: str) -> list[str]:
+    """Remove request wrappers while keeping service names and substantive intent words.
+
+    This is query-only: a CAN-bus tool still indexes and requires "can" unless that
+    word forms the explicit "can you" request prefix.
+    """
+    text = _QUERY_PREFIX_RE.sub("", text)
+    for _ in range(2):
+        text = _QUERY_SUFFIX_RE.sub("", text)
+    return _tokenize(text)
 
 
 def _fn(td: dict[str, Any]) -> dict[str, Any]:
@@ -65,6 +103,7 @@ def _registry_entry(name: str) -> Any:
     failures must never fail a bridge call). Lazy import: tests patch the registry."""
     try:
         from tools.registry import registry
+
         return registry.get_entry(name)
     except Exception:
         return None
@@ -76,48 +115,118 @@ def _registry_toolset(name: str) -> Optional[str]:
     return toolset if isinstance(toolset, str) else None
 
 
+def _search_text(
+    name: str, description: str, param_names: str, source_label: str
+) -> str:
+    name_words = re.sub(r"[_.:-]", " ", name.removeprefix("mcp__"))
+    extra = (
+        source_label if source_label and source_label not in name_words.split() else ""
+    )
+    return f"{name_words} {extra} {description} {param_names}"
+
+
+_cached_search_text = functools.lru_cache(maxsize=2048)(_search_text)
+
+
 def _entry_search_text(td: dict[str, Any], source_label: str = "") -> str:
     """Search-text blob: split name words + source label + description + top-level parameter
     names (schema bodies are noise with no recall gain). The ``mcp__`` prefix is dropped — it
     is in every MCP document, so its IDF is ~0. The source label lets a service-name query
     ("linear") reach a tool whose own name omits the vendor."""
     fn = _fn(td)
-    name = fn.get("name", "")
-    name = name.removeprefix("mcp__")
-    name_words = re.sub(r"[_.:-]", " ", name)
-    extra = source_label if source_label and source_label not in name_words.split() else ""
-    param_names = " ".join(((fn.get("parameters") or {}).get("properties") or {}).keys())
-    return f"{name_words} {extra} {fn.get('description', '') or ''} {param_names}"
+    name, description = fn.get("name", ""), str(fn.get("description", "") or "")
+    param_names = " ".join(
+        ((fn.get("parameters") or {}).get("properties") or {}).keys()
+    )
+    build = (
+        _cached_search_text
+        if len(name) + len(description) + len(param_names) + len(source_label)
+        <= _CACHED_SEARCH_TEXT_MAX_CHARS
+        else _search_text
+    )
+    return build(name, description, param_names, source_label)
 
 
-def _classify_source(name: str) -> tuple[str, str]:
-    """Return (source_kind, source_name) for a registered tool name."""
-    toolset = _registry_toolset(name)
-    if toolset is None:
-        return ("other", "")
-    return ("mcp" if toolset.startswith("mcp-") else "plugin", toolset)
+def _document_tokens(
+    name: str, description: str, parameters: str, source_name: str
+) -> tuple[str, ...]:
+    label = _listing_group_label(source_name) if source_name else ""
+    text = _search_text(name, description, parameters, label)
+    return (
+        _cached_token_tuple(text)
+        if len(text) <= _CACHED_SEARCH_TEXT_MAX_CHARS
+        else _token_tuple(text)
+    )
+
+
+_cached_document_tokens = functools.lru_cache(maxsize=2048)(_document_tokens)
+
+
+def _registry_sources() -> dict[str, tuple[str, str]]:
+    """Snapshot source labels using the active profile and session overlays.
+
+    The registry resolves scope once for the whole view without probing availability.
+    Only labels come from this view; caller-supplied definitions control catalog exposure.
+    """
+    try:
+        from tools.registry import registry
+
+        return {
+            entry.name: (
+                "mcp" if entry.toolset.startswith("mcp-") else "plugin",
+                entry.toolset,
+            )
+            for entry in registry.get_all_entries()
+            if isinstance(entry.toolset, str)
+        }
+    except Exception:
+        logger.debug("Unable to snapshot tool source labels", exc_info=True)
+        return {}
 
 
 def build_catalog(tool_defs: list[dict[str, Any]]) -> list[CatalogEntry]:
     """Build the deferred-tool catalog from the deferrable subset of tool-defs."""
+    sources = _registry_sources()
     catalog: list[CatalogEntry] = []
     for td in tool_defs:
         fn = _fn(td)
         name = fn.get("name", "")
         if not name:
             continue
-        source, source_name = _classify_source(name)
-        # Index the human-facing label ("linear", not "mcp-linear").
-        source_label = _listing_group_label(source_name) if source_name else ""
-        catalog.append(CatalogEntry(
-            name=name, description=fn.get("description", "") or "", schema=td, source=source,
-            source_name=source_name, _tokens=_tokenize(_entry_search_text(td, source_label))))
+        source, source_name = sources.get(name, ("other", ""))
+        description = str(fn.get("description", "") or "")
+        parameters = " ".join(
+            ((fn.get("parameters") or {}).get("properties") or {}).keys()
+        )
+        compute = (
+            _cached_document_tokens
+            if len(name) + len(description) + len(parameters) + len(source_name)
+            <= _CACHED_SEARCH_TEXT_MAX_CHARS
+            else _document_tokens
+        )
+        catalog.append(
+            CatalogEntry(
+                name=name,
+                description=description,
+                schema=td,
+                source=source,
+                source_name=source_name,
+                _tokens=list(compute(name, description, parameters, source_name)),
+            )
+        )
     return catalog
 
 
-def _bm25_score(query_tokens: list[str], doc_tokens: list[str], doc_lengths: list[int],
-                avg_dl: float, doc_freq: dict[str, int], n_docs: int, k1: float = 1.5,
-                b: float = 0.75) -> float:
+def _bm25_score(
+    query_tokens: list[str],
+    doc_tokens: list[str],
+    doc_lengths: list[int],
+    avg_dl: float,
+    doc_freq: dict[str, int],
+    n_docs: int,
+    k1: float = 1.5,
+    b: float = 0.75,
+) -> float:
     """Standard BM25 for one query against one document (inlined; the catalog is bounded —
     typically < 500 tools — so a dependency is not worth it)."""
     score = 0.0
@@ -127,19 +236,22 @@ def _bm25_score(query_tokens: list[str], doc_tokens: list[str], doc_lengths: lis
         df, tf = doc_freq.get(q, 0), doc_tf.get(q, 0)
         if df and tf:
             idf = math.log(1 + (n_docs - df + 0.5) / (df + 0.5))
-            score += idf * tf * (k1 + 1) / (tf + k1 * (1 - b + b * dl / max(avg_dl, 1.0)))
+            score += (
+                idf * tf * (k1 + 1) / (tf + k1 * (1 - b + b * dl / max(avg_dl, 1.0)))
+            )
     return score
 
 
-_CorpusStats = tuple[list[int], float, dict[str, int], int]  # doc_lengths, avg_dl, df, n_docs
+_CorpusStats = tuple[
+    list[int], float, dict[str, int], int
+]  # doc_lengths, avg_dl, df, n_docs
 
 
 def _corpus_stats(catalog: list[CatalogEntry]) -> _CorpusStats:
-    """Compute the BM25 statistics shared by every query over a catalog."""
-    doc_lengths = [len(entry._tokens) for entry in catalog]
-    avg_dl = sum(doc_lengths) / max(len(doc_lengths), 1)
-    doc_freq = Counter(tok for entry in catalog for tok in set(entry._tokens))
-    return doc_lengths, avg_dl, dict(doc_freq), len(catalog)
+    """Reuse only immutable text-derived math; every call keeps live entries and fresh mutable views."""
+    documents = tuple(tuple(entry._tokens) for entry in catalog)
+    index = corpus_index(documents)
+    return list(index.lengths), index.average, dict(index.frequencies), len(catalog)
 
 
 def _gate_token(query_tokens: list[str], doc_freq: dict[str, int], n_docs: int) -> str:
@@ -147,9 +259,11 @@ def _gate_token(query_tokens: list[str], doc_freq: dict[str, int], n_docs: int) 
     ``read``, ``create`` sit in dozens of tool documents and separate nothing; ``gmail``,
     ``github``, ``incident`` sit in a few and separate everything. A document without this
     token answered a different question, however many common tokens it shares."""
+
     def _idf(token: str) -> float:
         df = doc_freq.get(token, 0)
         return math.log(1 + (n_docs - df + 0.5) / (df + 0.5))
+
     return max(query_tokens, key=_idf)
 
 
@@ -173,8 +287,13 @@ def _required_term_coverage(answerable_term_count: int) -> int:
     return math.ceil(answerable_term_count * MIN_QUERY_TERM_COVERAGE)
 
 
-def search_catalog(catalog: list[CatalogEntry], query: str, limit: int = 5, *,
-                   corpus_stats: Optional[_CorpusStats] = None) -> list[CatalogEntry]:
+def search_catalog(
+    catalog: list[CatalogEntry],
+    query: str,
+    limit: int = 5,
+    *,
+    corpus_stats: Optional[_CorpusStats] = None,
+) -> list[CatalogEntry]:
     """Top-``limit`` catalog entries for ``query`` by BM25 (exact name match ranks first).
 
     Admission is by the query's rarest token (:func:`_gate_token`), not by ``score > 0``:
@@ -183,10 +302,16 @@ def search_catalog(catalog: list[CatalogEntry], query: str, limit: int = 5, *,
     gmail email" returned 5 incident tools that only shared ``email``). A token no document
     carries admits nothing; the caller's empty-group hint tells the model to retry without it.
     Long queries additionally need :func:`_required_term_coverage` of their answerable terms."""
-    query_tokens = _tokenize(query) if catalog and limit > 0 else []
+    query_tokens = _query_tokens(query) if catalog and limit > 0 else []
     if not query_tokens:
         return []
-    corpus_stats = corpus_stats or _corpus_stats(catalog)
+    index = corpus_index(tuple(tuple(entry._tokens) for entry in catalog))
+    corpus_stats = corpus_stats or (
+        index.lengths,
+        index.average,
+        index.frequencies,
+        len(catalog),
+    )
     doc_freq = corpus_stats[2]
     gate = _gate_token(query_tokens, doc_freq, corpus_stats[3])
     answerable = {t for t in query_tokens if doc_freq.get(t, 0) > 0}
@@ -198,12 +323,27 @@ def search_catalog(catalog: list[CatalogEntry], query: str, limit: int = 5, *,
         if entry.name.lower() == exact_name:
             return True
         tokens = set(entry._tokens)
-        return gate in tokens and sum(1 for t in answerable if t in tokens) >= required_terms
+        return (
+            gate in tokens
+            and sum(1 for t in answerable if t in tokens) >= required_terms
+        )
 
+    positions = set(index.postings.get(gate, ()))
+    positions.update(
+        exact_positions(tuple(entry.name for entry in catalog), exact_name)
+    )
+    # Catalog order is the existing stable tie breaker; a posting set must not reorder ties.
+    candidates = (catalog[position] for position in sorted(positions))
     scored = [
-        (float("inf") if entry.name.lower() == exact_name
-         else _bm25_score(query_tokens, entry._tokens, *corpus_stats), entry)
-        for entry in catalog if _admitted(entry)]
+        (
+            float("inf")
+            if entry.name.lower() == exact_name
+            else _bm25_score(query_tokens, entry._tokens, *corpus_stats),
+            entry,
+        )
+        for entry in candidates
+        if _admitted(entry)
+    ]
     scored.sort(key=lambda x: x[0], reverse=True)
     return [e for _, e in scored[:limit]]
 
@@ -223,7 +363,7 @@ def _short_desc(description: str, max_chars: int = CATALOG_SUMMARY_MAX_CHARS) ->
     search stay linear-time on hostile input."""
     text = " ".join((description or "").split())
     m = _SENTENCE_END_RE.search(text)
-    text = text[:m.end()] if m else text
+    text = text[: m.end()] if m else text
     if len(text) <= max_chars:
         return text
     clipped = text[:max_chars]
@@ -258,26 +398,31 @@ def hidden_declared_sources() -> list[dict[str, Any]]:
         if details is None:
             continue
         _decl, _current, sentence = details
-        rows.append({"name": server_name, "tool_count": len(entries), "unavailable": sentence})
+        rows.append(
+            {"name": server_name, "tool_count": len(entries), "unavailable": sentence}
+        )
     return rows
 
 
 def build_catalog_listing_with_form(
-    deferrable: list[dict[str, Any]], *, max_tokens: int = 4000) -> tuple[Optional[str], str]:
+    deferrable: list[dict[str, Any]], *, max_tokens: int = 4000
+) -> tuple[Optional[str], str]:
     """Render the deferred-catalog manifest: ``- name: short desc`` lines grouped per source.
     Returns ``(text, form)``; form is ``"full"``, ``"names"``, ``"mixed"`` (oversized servers
     collapsed to a name + count line), ``"groups"`` (every server summarized) or ``"none"``
     (over budget even summarized -> text is None). Ordering is deterministic (sorted groups
     and tools) so the block is byte-stable — the request prefix stays cacheable. Degradation
     is PER SERVER, largest first: one huge server must not cost a small one its listing."""
+    sources = _registry_sources()
     groups: dict[str, list[tuple[str, str]]] = {}
     for td in deferrable:
         fn = _fn(td)
         name = fn.get("name", "")
         if name:
-            # _classify_source gives ("other", "") when unregistered; the label of "" is "other".
-            label = _listing_group_label(_classify_source(name)[1])
-            groups.setdefault(label, []).append((name, _short_desc(fn.get("description", ""))))
+            label = _listing_group_label(sources.get(name, ("other", ""))[1])
+            groups.setdefault(label, []).append(
+                (name, _short_desc(fn.get("description", "")))
+            )
     unavailable = hidden_declared_sources()
     if not groups and not unavailable:
         return None, "none"
@@ -286,25 +431,43 @@ def build_catalog_listing_with_form(
         """Render one server's block. mode: 'full' | 'names' | 'summary'."""
         tools = sorted(groups[label])
         if mode == "summary":
-            return (f"{label} ({len(tools)} tools — names not listed; "
-                    f"discover via `{TOOL_SEARCH_NAME}`)")
+            return (
+                f"{label} ({len(tools)} tools — names not listed; "
+                f"discover via `{TOOL_SEARCH_NAME}`)"
+            )
         if mode == "full":
-            lines = [f"- {name}: {desc}" if desc else f"- {name}" for name, desc in tools]
+            lines = [
+                f"- {name}: {desc}" if desc else f"- {name}" for name, desc in tools
+            ]
         else:
-            lines = [", ".join(name for name, _ in tools)] if len(tools) > 1 else [f"- {tools[0][0]}"]
+            lines = (
+                [", ".join(name for name, _ in tools)]
+                if len(tools) > 1
+                else [f"- {tools[0][0]}"]
+            )
         # A one-tool group's "<label> tools (1):" heading says nothing its single line does not.
-        return "\n".join(lines if len(tools) == 1 else [f"{label} tools ({len(tools)}):", *lines])
+        return "\n".join(
+            lines if len(tools) == 1 else [f"{label} tools ({len(tools)}):", *lines]
+        )
 
-    header = ("Deferred tool catalog (call schemas via "
-              f"`{TOOL_DESCRIBE_NAME}`, invoke via `{TOOL_CALL_NAME}`):")
+    header = (
+        "Deferred tool catalog (call schemas via "
+        f"`{TOOL_DESCRIBE_NAME}`, invoke via `{TOOL_CALL_NAME}`):"
+    )
 
     def assemble_if_fits(modes: dict[str, str]) -> Optional[str]:
         # Headless one-tool lines go first, straight under the catalog header: placed between
         # groups they would read as members of the group above them.
-        singles = [render_group(label, modes[label]) for label in sorted(groups)
-                   if len(groups[label]) == 1 and modes[label] != "summary"]
-        available_blocks = {label: render_group(label, modes[label]) for label in groups
-                            if len(groups[label]) > 1 or modes[label] == "summary"}
+        singles = [
+            render_group(label, modes[label])
+            for label in sorted(groups)
+            if len(groups[label]) == 1 and modes[label] != "summary"
+        ]
+        available_blocks = {
+            label: render_group(label, modes[label])
+            for label in groups
+            if len(groups[label]) > 1 or modes[label] == "summary"
+        }
         unavailable_blocks = {
             row["name"]: (
                 f"{row['name']} ({row['tool_count']} tools unavailable: {row['unavailable']})"
@@ -314,7 +477,9 @@ def build_catalog_listing_with_form(
             for row in unavailable
         }
         blocks = [
-            available_blocks[label] if label in available_blocks else unavailable_blocks[label]
+            available_blocks[label]
+            if label in available_blocks
+            else unavailable_blocks[label]
             for label in sorted(available_blocks | unavailable_blocks)
         ]
         text = "\n".join([header] + singles + blocks)
@@ -330,7 +495,9 @@ def build_catalog_listing_with_form(
     for lbl in sorted(groups, key=lambda lbl: (-len(render_group(lbl, "names")), lbl)):
         summarized.add(lbl)
         for rest in ("full", "names"):
-            text = assemble_if_fits({g: "summary" if g in summarized else rest for g in groups})
+            text = assemble_if_fits(
+                {g: "summary" if g in summarized else rest for g in groups}
+            )
             if text is not None:
                 return text, "groups" if len(summarized) == len(groups) else "mixed"
     return None, "none"

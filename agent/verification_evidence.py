@@ -24,7 +24,7 @@ _MAX_EVIDENCE_AGE_DAYS = 30
 _MAX_EVENTS_PER_SESSION_ROOT = 100
 _MAX_TOTAL_UNREFERENCED_EVENTS = 10_000
 _AD_HOC_SCRIPT_NAME_PREFIXES = ("hermes-verify-", "hermes-ad-hoc-")
-_VERIFY_SCHEMA_VERSION = 1
+_VERIFY_SCHEMA_VERSION = 2
 # Latest verify-command run per (session, root) whose own exit status the shell hid, with the
 # time it ran. Read by the stop nudge in this same process, so it stays in memory; bounded for
 # long-lived gateways.
@@ -41,8 +41,6 @@ _WINDOWS_EXE_SUFFIX_RE = re.compile(r"\.(?:exe|bat|cmd)$", re.IGNORECASE)
 _INTERPRETER_NAME_RE = re.compile(
     r"^(?:" + "|".join(sorted(_INTERPRETERS, key=len, reverse=True)) + r")(?:[0-9]+(?:\.[0-9]+)*)?$"
 )
-_TARGET_EXTENSIONS = (".py", ".js", ".jsx", ".ts", ".tsx", ".rs", ".go", ".java")
-_TARGET_PREFIXES = ("test_", "tests", "spec", "__tests__")
 # Ordered: first matching keyword group wins; "check" only counts when the
 # command is not itself a test command; anything else is a test.
 _KIND_KEYWORDS = (
@@ -50,6 +48,7 @@ _KIND_KEYWORDS = (
     (("typecheck", "tsc", "mypy", "pyright", "ty"), "typecheck"), (("build",), "build"),
     (("fmt", "format"), "format"),
 )
+_SCOPE_NEUTRAL_ENV = frozenset({"CI", "NO_COLOR", "FORCE_COLOR", "PYTHONUNBUFFERED", "PYTHONDONTWRITEBYTECODE"})
 _PYTEST_SPELLINGS = (
     ["python", "-m", "pytest"], ["python3", "-m", "pytest"],
     ["uv", "run", "pytest"], ["poetry", "run", "pytest"], ["pipenv", "run", "pytest"],
@@ -114,6 +113,7 @@ class VerificationEvidence:
     root: str
     session_id: str
     output_summary: str = ""
+    covered_paths: tuple[str, ...] = ()
 
 
 def _utc_now() -> str:
@@ -145,8 +145,14 @@ def _transaction():
 
 
 def _ensure_schema(conn: sqlite3.Connection) -> None:
+    from hermes_cli.sqlite_util import add_column_if_missing
+
     for ddl in _SCHEMA_DDL:
         conn.execute(ddl)
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(verification_events)")}
+    for column in ("snapshot_json", "covered_paths_json"):
+        if column not in columns:
+            add_column_if_missing(conn, "verification_events", column, f"{column} TEXT")
     conn.execute(
         "INSERT OR REPLACE INTO meta(key, value) VALUES ('schema_version', ?)",
         (str(_VERIFY_SCHEMA_VERSION),),
@@ -409,12 +415,6 @@ def _kind_for_command(canonical: str) -> str:
     return kind or ("check" if "check" in lowered and "test" not in lowered else "test")
 
 
-def _looks_like_target(arg: str) -> bool:
-    return bool(arg) and not arg.startswith("-") and "=" not in arg and (
-        any(m in arg for m in ("/", "\\", "::")) or arg.endswith(_TARGET_EXTENSIONS) or arg.startswith(_TARGET_PREFIXES)
-    )
-
-
 def _is_under(token: str, base: str | Path | None) -> bool:
     """Whether absolute path ``token`` is ``base`` or lies beneath it (resolved)."""
     if not base:
@@ -543,9 +543,23 @@ def _root_for(facts: dict[str, Any] | None, cwd: str | Path | None) -> str:
 
 def _load_changed_paths(raw: Any) -> list[Any]:
     try:
-        return json.loads(raw or "[]")
+        value = json.loads(raw or "[]")
+        return [p for p in value if isinstance(p, str)] if isinstance(value, list) else []
     except (TypeError, ValueError):
         return []
+
+
+def _has_scope_overrides(command: str) -> bool:
+    """Explicit environment overrides can select a subset (for example PYTEST_ADDOPTS)."""
+    for segment in _split_shell_segments(command):
+        tokens = segment.tokens[1:] if segment.tokens and segment.tokens[0] == "env" else segment.tokens
+        for token in tokens:
+            name, separator, _ = token.partition("=")
+            if not separator or token.startswith("-"):
+                break
+            if name not in _SCOPE_NEUTRAL_ENV:
+                return True
+    return False
 
 
 def classify_verification_command(
@@ -581,23 +595,60 @@ def _classify_in_workspace(
     if match is not None and match[2] is not None:
         canonical, trailing_args, status = match
         kind = _kind_for_command(canonical)
-        scope = "targeted" if any(map(_looks_like_target, trailing_args)) else "full"
+        from agent.verification_scope import command_scope
+
+        scope, covered_paths = command_scope(trailing_args, cwd=cwd or ".", root=_root_for(facts, cwd))
+        if _has_scope_overrides(command):
+            scope, covered_paths = "targeted", ()
     else:
         if verify_commands or _find_ad_hoc_match(command, facts.get("root"), int(exit_code)) is None:
             return None
         canonical, kind, scope = "ad-hoc verification script", "ad_hoc", "targeted"
+        covered_paths = ()
         status = int(exit_code)
     return VerificationEvidence(
         command=command, canonical_command=canonical, kind=kind, scope=scope,
         status="passed" if int(status) == 0 else "failed", exit_code=int(exit_code),
         cwd=str(Path(cwd or ".").resolve()), root=_root_for(facts, cwd),
         session_id=str(session_id or "default"), output_summary=_summarize_output(output),
+        covered_paths=covered_paths,
     )
+
+
+def begin_verification(
+    *, cwd: str | Path | None, command: str | None = None, session_id: str | None = None,
+    local: bool = True,
+) -> Optional[dict[str, Any]]:
+    """Capture inputs before execution, without claiming remote files are host files.
+
+    The returned token belongs to one command attempt, so simultaneous runs cannot
+    overwrite each other's start state. Non-verification calls do not hash the tree.
+    """
+    if not _ledger_enabled():
+        return None
+    unavailable = {"fingerprint": None, "reason": "verification inputs were not captured at command start"}
+    if not local:
+        return {**unavailable, "reason": "the execution backend has no local workspace snapshot"}
+    facts = _project_facts(cwd)
+    if not facts:
+        return unavailable
+    if command is not None:
+        verify_commands = list(facts.get("verifyCommands") or [])
+        canonical = _find_canonical_match(command, verify_commands, 0, attributed=False)
+        ad_hoc = not verify_commands and _find_ad_hoc_match(command, facts.get("root")) is not None
+        if canonical is None and not ad_hoc:
+            return unavailable
+        if any(segment.tokens and segment.tokens[0] in {"cd", "pushd", "popd"}
+               for segment in _split_shell_segments(command)):
+            return {**unavailable, "reason": "the command changes directory; use the terminal workdir argument"}
+    from agent.verification_snapshot import capture_workspace_snapshot
+
+    return capture_workspace_snapshot(_root_for(facts, cwd))
 
 
 def record_terminal_result(
     *, command: str, cwd: str | Path | None, session_id: str | None, exit_code: int, output: str = "",
-    pipeline_status: Optional[list[int]] = None,
+    pipeline_status: Optional[list[int]] = None, snapshot: Optional[dict[str, Any]] = None,
 ) -> Optional[dict[str, Any]]:
     """Record a foreground terminal result when it is verification evidence.
 
@@ -616,7 +667,7 @@ def record_terminal_result(
         pipeline_status=pipeline_status,
     )
     if evidence is not None:
-        return _insert_evidence(evidence)
+        return _insert_evidence(evidence, snapshot=snapshot)
     verify_commands = list(facts.get("verifyCommands") or [])
     if _find_canonical_match(command, verify_commands, int(exit_code), attributed=False):
         _UNATTRIBUTED_RUNS.pop(key, None)
@@ -641,7 +692,7 @@ def last_unattributed_run(
 
 def record_verify_run(
     *, root: str | Path, session_id: str | None = None, ok: bool, command: str = "hermes verify",
-    scope: str = "full", output: str = "",
+    scope: str = "full", output: str = "", snapshot: Optional[dict[str, Any]] = None,
 ) -> Optional[dict[str, Any]]:
     """Record a completed ``hermes verify`` run as verification evidence.
 
@@ -658,22 +709,43 @@ def record_verify_run(
         status="passed" if ok else "failed", exit_code=0 if ok else 1, cwd=resolved,
         root=str((_project_facts(root) or {}).get("root") or resolved),
         session_id=str(session_id or "default"), output_summary=_summarize_output(output),
-    ))
+    ), snapshot=snapshot)
 
 
-def _insert_evidence(evidence: VerificationEvidence) -> dict[str, Any]:
+def _bind_snapshot(root: str, snapshot: Optional[dict[str, Any]]) -> dict[str, Any]:
+    from agent.verification_snapshot import capture_workspace_snapshot
+
+    if snapshot is not None and (snapshot.get("root") != root or not snapshot.get("fingerprint")):
+        return {"status": "unavailable", "reason": snapshot.get("reason") or "verification input snapshot unavailable"}
+    finished = capture_workspace_snapshot(root)
+    # Older direct recorder callers remain valid, but can bind only the completion content.
+    started = finished if snapshot is None else snapshot
+    if not finished.get("fingerprint"):
+        return {"status": "unavailable", "reason": finished.get("reason")}
+    matching = started["fingerprint"] == finished["fingerprint"]
+    return {
+        "status": "matched" if matching else "changed",
+        "start": started["fingerprint"], "end": finished["fingerprint"],
+        "binding": "completion" if snapshot is None else "execution",
+    }
+
+
+def _insert_evidence(evidence: VerificationEvidence, *, snapshot: Optional[dict[str, Any]] = None) -> dict[str, Any]:
     """Insert a classified evidence row and repoint the workspace state."""
     created_at = _utc_now()
     e = evidence
+    binding = _bind_snapshot(e.root, snapshot)
+    full_pass = e.status == "passed" and e.scope == "full" and binding["status"] == "matched"
+    covered_paths = e.covered_paths
     _UNATTRIBUTED_RUNS.pop((e.session_id, e.root), None)
     with _DB_LOCK, _transaction() as conn:
         cur = conn.execute(
             "INSERT INTO verification_events("
             " created_at, session_id, cwd, root, command, canonical_command,"
-            " kind, scope, status, exit_code, output_summary"
-            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " kind, scope, status, exit_code, output_summary, snapshot_json, covered_paths_json"
+            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (created_at, e.session_id, e.cwd, e.root, e.command, e.canonical_command, e.kind, e.scope,
-             e.status, e.exit_code, e.output_summary),
+             e.status, e.exit_code, e.output_summary, json.dumps(binding), json.dumps(covered_paths)),
         )
         if cur.lastrowid is None:
             raise RuntimeError("verification event insert did not return an id")
@@ -683,24 +755,23 @@ def _insert_evidence(evidence: VerificationEvidence) -> dict[str, Any]:
             " session_id, root, last_event_id, last_edit_at, changed_paths_json"
             ") VALUES (?, ?, ?, NULL, '[]')"
             " ON CONFLICT(session_id, root) DO UPDATE SET"
-            " last_event_id = excluded.last_event_id,"
-            " last_edit_at = NULL,"
-            " changed_paths_json = '[]'",
+            " last_event_id = excluded.last_event_id",
             (e.session_id, e.root, event_id),
         )
         # A full passing ``hermes verify`` proves the workspace. Partial or
         # failed runs must not wipe another session's edit record (#103650).
-        if e.kind == "verify" and e.status == "passed" and e.scope == "full":
+        if full_pass:
             conn.execute(
                 "UPDATE verification_state"
                 " SET last_event_id = ?, last_edit_at = NULL, changed_paths_json = '[]'"
-                " WHERE root = ? AND session_id != ?",
-                (event_id, e.root, e.session_id),
+                " WHERE root = ? AND (session_id = ? OR ? = 'verify')"
+                " AND (last_edit_at IS NULL OR last_edit_at <= ?)",
+                (event_id, e.root, e.session_id, e.kind, created_at),
             )
         _prune_old_events(conn, session_id=e.session_id, root=e.root)
         conn.commit()
 
-    return {"id": event_id, **e.__dict__, "created_at": created_at}
+    return {"id": event_id, **e.__dict__, "created_at": created_at, "snapshot": binding, "covered_paths": covered_paths}
 
 
 def mark_workspace_edited(
@@ -760,13 +831,64 @@ def _newest_workspace_verify(
     ).fetchone()
 
 
-def verification_status(*, session_id: str | None, cwd: str | Path | None) -> dict[str, Any]:
+def _event_proof(event: dict[str, Any], current: dict[str, Any]) -> tuple[str, str]:
+    try:
+        snapshot = json.loads(event.get("snapshot_json") or "{}")
+    except (TypeError, ValueError):
+        snapshot = {}
+    snapshot = snapshot if isinstance(snapshot, dict) else {}
+    event["snapshot"] = snapshot
+    event["covered_paths"] = _load_changed_paths(event.get("covered_paths_json"))
+    if not snapshot:
+        return "stale", "this evidence predates content snapshots; run verification again"
+    if snapshot.get("status") == "changed":
+        return "stale", "workspace inputs changed while verification was running"
+    if snapshot.get("status") != "matched" or not current.get("fingerprint"):
+        return "unverified", snapshot.get("reason") or current.get("reason") or "workspace inputs could not be verified"
+    if snapshot.get("end") != current["fingerprint"]:
+        return "stale", "workspace content differs from the verified inputs"
+    return event["status"], ""
+
+
+def _targeted_coverage(
+    events: list[dict[str, Any]], current: dict[str, Any], *, paths: list[str], root: str,
+) -> bool:
+    from agent.verification_snapshot import normalize_paths, paths_covered
+
+    targets: list[str] = []
+    for event in events:
+        if _event_proof(event, current)[0] == "passed":
+            if event["scope"] == "full":
+                return True
+            targets.extend(event["covered_paths"])
+    return paths_covered(normalize_paths(paths, root=root), targets)
+
+
+def verification_status(
+    *, session_id: str | None, cwd: str | Path | None, required_paths: list[str] | None = None,
+) -> dict[str, Any]:
     """Return the best known verification state for a session/workspace.
 
-    Evidence recorded before the latest edit is reported as ``stale``. A
-    ``hermes verify`` event for the same ``root`` that is at least as new as
-    that edit satisfies the guard even if another session recorded it.
+    Evidence must match the current content as well as the edit timeline. A
+    targeted pass proves only explicit paths; full ``hermes verify`` evidence
+    may be shared between sessions only for the same verified content.
     """
+    return _verification_status(session_id=session_id, cwd=cwd, required_paths=required_paths)
+
+
+def _recorded_verification_status(evidence: dict[str, Any]) -> dict[str, Any]:
+    """Receipt for the just-recorded completion, without hashing its inputs a third time."""
+    binding = evidence["snapshot"]
+    return _verification_status(
+        session_id=evidence["session_id"], cwd=evidence["cwd"],
+        current_snapshot={"root": evidence["root"], "fingerprint": binding.get("end"), "reason": binding.get("reason")},
+    )
+
+
+def _verification_status(
+    *, session_id: str | None, cwd: str | Path | None, required_paths: list[str] | None = None,
+    current_snapshot: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     if not _ledger_enabled():
         return {"status": "disabled", "evidence": None}
     facts = _project_facts(cwd)
@@ -800,6 +922,22 @@ def verification_status(*, session_id: str | None, cwd: str | Path | None) -> di
         }
         if event is None:
             return {"status": "unverified", **result}
-
         evidence = dict(event)
-        return {"status": "stale" if stale else evidence["status"], **result, "evidence": evidence}
+        candidates = [dict(row) for row in conn.execute(
+            "SELECT * FROM verification_events WHERE session_id = ? AND root = ?"
+            " AND status = 'passed' AND created_at >= ? ORDER BY id DESC LIMIT ?",
+            (sid, root, last_edit_at or "", _MAX_EVENTS_PER_SESSION_ROOT),
+        )]
+
+    from agent.verification_snapshot import capture_workspace_snapshot
+
+    current = (current_snapshot if current_snapshot is not None and current_snapshot.get("root") == root
+               else capture_workspace_snapshot(root))
+    state_name, reason = _event_proof(evidence, current)
+    if stale:
+        state_name, reason = "stale", "code was edited after this verification run"
+    elif state_name == "passed" and evidence["scope"] == "targeted" and evidence["kind"] != "ad_hoc":
+        paths = required_paths if required_paths is not None else result["changed_paths"]
+        if not _targeted_coverage(candidates, current, paths=paths, root=root):
+            state_name, reason = "unverified", "the targeted check does not cover all edited paths"
+    return {**result, "status": state_name, "evidence": evidence, "reason": reason}

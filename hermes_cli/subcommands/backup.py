@@ -23,9 +23,13 @@ def build_backup_parser(subparsers, *, cmd_backup: Callable) -> None:
     backup_parser.add_argument(
         "-o",
         "--output", help="Output path for the zip file (default: ~/hermes-backup-<timestamp>.zip)")
-    backup_parser.add_argument(
+    mode = backup_parser.add_mutually_exclusive_group()
+    mode.add_argument(
         "-q", "--quick", action="store_true",
         help="Quick snapshot: only critical state files (config, state.db, .env, auth, cron)")
+    mode.add_argument(
+        "--verify", action="store_true",
+        help="Decompress and CRC-check every full-archive member before publishing or rotating backups")
     backup_parser.add_argument(
         "-l", "--label", help="Label for the snapshot (only used with --quick)")
     backup_parser.add_argument(

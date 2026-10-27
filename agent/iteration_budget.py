@@ -1,8 +1,9 @@
 """Per-agent iteration budget — thread-safe consume/refund counter.
 
 Each ``AIAgent`` (parent or subagent) holds its own :class:`IterationBudget`: the parent's
-cap is ``max_iterations`` (default 500), each subagent's ``delegation.max_iterations``
-(default 50), so total iterations across parent + subagents can exceed the parent's cap.
+cap is ``max_iterations``, each subagent's ``delegation.max_iterations``, so total
+iterations can exceed the parent's cap. ``agent.task_budget`` optionally layers a
+task-wide ordinary-iteration ceiling over these local caps.
 """
 
 from __future__ import annotations

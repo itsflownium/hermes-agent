@@ -112,11 +112,10 @@ def _get_independent_completions() -> bool:
     completion messages that land as each finishes. Off = one consolidated message when the whole call is done."""
     return is_truthy_value(_cfg().get("independent_completions", False))
 
-def _get_worktree_isolation() -> bool:
-    """delegation.worktree_isolation (bool, default False): each child gets its own
-    git worktree off the parent's HEAD so parallel children never contend for one
-    working copy. Git-only and local-backend-only; otherwise silently ignored."""
-    return bool(_cfg().get("worktree_isolation", False))
+def _get_worktree_isolation() -> bool | str:
+    """False disables; True is best-effort; 'required' refuses an unisolated start."""
+    value = _cfg().get("worktree_isolation", False)
+    return "required" if isinstance(value, str) and value.strip().lower() == "required" else bool(value)
 
 def _get_max_async_children() -> int:
     """Concurrency cap for background delegations == delegation.max_concurrent_children. At capacity a new async

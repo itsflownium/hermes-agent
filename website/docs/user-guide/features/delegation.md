@@ -397,6 +397,26 @@ delegation:
 
 A child that exhausts its budget returns with `exit_reason: max_iterations` and `truncated: true`, so the parent can tell a budget stop from a completed task.
 
+### Shared task iteration limit
+
+Set `delegation.shared_iteration_limit` to a positive integer to bound ordinary
+loop iterations across a root turn and all its delegated descendants. The
+default is `0`, preserving independent budgets. Every agent also retains its
+local `max_iterations` cap. Reservations and refunds are atomic across workers.
+
+```yaml
+delegation:
+  max_iterations: 60
+  shared_iteration_limit: 120
+```
+
+Each new root turn receives a fresh pool. A background child keeps the pool it
+inherited at construction, so it cannot consume a later turn's allowance. Result
+metadata reports `task_iteration_budget` with the scope
+`shared_ordinary_loop_iterations`. This is not a physical-request or dollar cap:
+existing iteration refunds, grace summaries, auxiliary calls, SDK retries, and
+paid tools retain their existing behavior.
+
 ## Child Timeout
 
 By default there is **no wall-clock timeout** on subagents. Children fail only from what they're actually doing — API errors, tool errors, or hitting their iteration budget — never from a delegation-level stopwatch. Earlier releases shipped a hard cap (300s, later 600s), which kept killing legitimately busy children mid-task: deep code reviews, large research fan-outs, and slow reasoning models routinely need more than 10 minutes while making steady progress the whole time.
@@ -663,6 +683,14 @@ worktree, branched from the repo's current `HEAD` (inspired by Muse Code's
 delegation:
   worktree_isolation: true   # default: false
 ```
+
+Use `worktree_isolation: required` for editing tasks that must not start in a
+shared checkout. The worker is refused before its conversation starts if the
+backend is nonlocal, a committed Git base cannot be resolved, creation fails,
+or the child's initial working directory cannot be verified. Results include
+`isolation_required`, `cwd_verified`, and the pinned `base_commit` in the
+worktree receipt. Boolean `true` retains best-effort behavior; `false` disables
+worktrees. Worktrees isolate initial working copies, not OS file access.
 
 With isolation on:
 

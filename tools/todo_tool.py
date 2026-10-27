@@ -44,10 +44,14 @@ class TodoStore:
                 self._merge(todos)
             else:
                 self._items = self._fresh_items(todos)
+            if len(self._items) > MAX_TODO_ITEMS:
+                raise ValueError(
+                    f"Todo capacity is {MAX_TODO_ITEMS} unique items; no changes were saved. "
+                    "Remove older items before adding more."
+                )
         except ValueError:
             self._items = before  # rejected write must not leave a partial list behind
             raise
-        del self._items[MAX_TODO_ITEMS:]  # keep the priority head; replays can't grow unbounded
         self._sanitize_parents(self._items)
         if self._items != before:
             self._revision += 1
@@ -67,7 +71,7 @@ class TodoStore:
                 self._items.append(validated)
                 continue
             if t.get("content"):
-                cur["content"] = self._cap_content(str(t["content"]).strip())
+                cur["content"] = self._validate({**cur, "content": t["content"]})["content"]
             if t.get("status") and str(t["status"]).strip().lower() in VALID_STATUSES:
                 cur["status"] = str(t["status"]).strip().lower()
             if "parent" in t:

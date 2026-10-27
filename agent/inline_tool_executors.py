@@ -151,7 +151,7 @@ def _memory(agent, args: dict, ctx: InlineToolContext) -> Any:
     # Mirror built-in memory writes to external providers; gating lives in
     # MemoryManager.notify_memory_tool_write.
     if agent._memory_manager:
-        agent._memory_manager.notify_memory_tool_write(
+        receipts = agent._memory_manager.notify_memory_tool_write(
             result,
             args,
             build_metadata=lambda: agent._build_memory_write_metadata(
@@ -159,6 +159,8 @@ def _memory(agent, args: dict, ctx: InlineToolContext) -> Any:
                 tool_call_id=ctx.tool_call_id,
             ),
         )
+        from agent.memory_write_receipts import attach_receipts
+        result = attach_receipts(result, receipts)
     return result
 
 
@@ -250,11 +252,18 @@ def _setup_mcp_shim(agent, args: dict, ctx: InlineToolContext) -> Any:
 
 
 # Order is the historical if/elif order of ``execute_tool_calls_sequential``.
+def _todo(agent, args: dict, ctx: InlineToolContext) -> Any:
+    from tools.todo_tool import todo_tool
+    store = agent._todo_store
+    before = store.snapshot()["revision"] if store is not None else None
+    result = todo_tool(todos=args.get("todos"), merge=args.get("merge", False), store=store)
+    if store is not None and store.snapshot()["revision"] != before:
+        agent._todo_written_this_turn = True
+    return result
+
+
 _RAW_INLINE_TOOL_EXECUTORS: dict[str, InlineToolExecutor] = {
-    "todo_list": _tool(
-        "tools.todo_tool", "todo_tool", ("todos", "todos"), ("merge", "merge", False),
-        store=lambda agent, ctx: agent._todo_store,
-    ),
+    "todo_list": _todo,
     # Bot Mode teammate DM is injected, not registered: only a canonical Bot
     # Chat session carries the schema, and the tool re-gates on the title.
     "message_agent": _tool(

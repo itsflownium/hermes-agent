@@ -175,6 +175,7 @@ class TestPatchSensitivePathExtraction:
        same traversal rejection as the other V4A headers).
     """
 
+    @pytest.mark.platforms("posix")
     @patch("tools.file_tools._get_file_ops")
     def test_patch_move_to_sensitive_dst_blocked(self, mock_get):
         from tools.file_tools import patch_tool
@@ -189,6 +190,7 @@ class TestPatchSensitivePathExtraction:
         mock_get.assert_not_called()
 
 
+    @pytest.mark.platforms("posix")
     @patch("tools.file_tools._get_file_ops")
     def test_patch_update_no_space_after_asterisks_blocked(self, mock_get):
         """``***Update File:`` (no space after asterisks) must also be caught.
@@ -375,8 +377,9 @@ class TestSensitivePathCheck:
         from tools.file_tools import write_file_tool
         result = json.loads(write_file_tool("/etc/passwd", "evil"))
         assert "error" in result
-        assert "sensitive system path" in result["error"]
+        assert any(marker in result["error"] for marker in ("sensitive system path", "protected system/credential file"))
 
+    @pytest.mark.platforms("posix")
     def test_macos_private_var_carveouts(self):
         """macOS temp dirs under /private/var must not be blanket-blocked,
         while the genuinely-sensitive /private/var subtrees still are."""

@@ -35,6 +35,7 @@ import shutil
 import subprocess
 import sys
 import time
+import uuid
 from collections import Counter
 from pathlib import Path
 
@@ -143,6 +144,58 @@ SUCCESS = {
 }
 
 
+def _append_attempt(path: Path, record: dict):
+    """Persist admission before launching so an interrupted run stays in the denominator."""
+    with path.open("a+b") as output:
+        if output.tell():
+            output.seek(-1, os.SEEK_END)
+            if output.read(1) != b"\n":
+                # Retain a torn record as invalid, but do not glue the next admission to it.
+                output.write(b"\n")
+        output.write((json.dumps(record) + "\n").encode("utf-8"))
+        output.flush()
+        os.fsync(output.fileno())
+
+
+def _invoke(command, *, timeout: float, **kwargs):
+    try:
+        result = subprocess.run(command, timeout=timeout, check=False, **kwargs)
+    except subprocess.TimeoutExpired:
+        return "", -9, "timeout"
+    except OSError:
+        return "", -1, "infra_failure"
+    out = (result.stdout or "").strip()
+    state = "completed" if result.returncode == 0 else "agent_failure" if out else "infra_failure"
+    return out, result.returncode, state
+
+
+def _report_attempts(path: Path, arm: str):
+    if not path.exists():
+        return
+    states = {}
+    invalid = 0
+    for line in path.read_text(encoding="utf-8-sig").splitlines():
+        try:
+            event = json.loads(line)
+        except ValueError:
+            invalid += 1
+            continue
+        if not isinstance(event, dict) or not isinstance(event.get("attempt_id"), str):
+            invalid += 1
+            continue
+        attempt_id, state = event["attempt_id"], event.get("state")
+        if state == "started":
+            states.setdefault(attempt_id, "incomplete")
+        elif attempt_id in states and state in {"completed", "agent_failure", "timeout", "infra_failure"}:
+            states[attempt_id] = state
+        else:
+            invalid += 1
+    counts = Counter(states.values())
+    outcomes = " ".join(f"{state}={counts[state]}" for state in
+                        ("completed", "agent_failure", "timeout", "infra_failure", "incomplete"))
+    print(f"ATTEMPTS {arm}: launched={len(states)} {outcomes} invalid_records={invalid}")
+
+
 def run(arm: str, model: str, reps: int, pythonpath: str, only=None):
     resdir = ROOT / "results" / model.replace("/", "_") / arm
     resdir.mkdir(parents=True, exist_ok=True)
@@ -175,7 +228,10 @@ kind = "observability"
 enabled = true
 
 [components.config]
-version = 3
+version = 4
+
+[components.config.opentelemetry]
+enabled = false
 
 [components.config.atof]
 enabled = true
@@ -196,24 +252,24 @@ mode = "overwrite"
             })
             q = task.replace("{WORK}", str(work))
             t0 = time.time()
-            try:
-                p = subprocess.run(
-                    [sys.executable, "-m", "hermes_cli.main", "chat", "--query", q,
-                     "--quiet", "--max-turns", "30", "--accept-hooks", "--model", model],
-                    cwd=work, env=env, capture_output=True, text=True,
-                    encoding="utf-8", errors="replace", timeout=600, check=False)
-                out = (p.stdout or "").strip()
-                rc = p.returncode
-            except subprocess.TimeoutExpired:
-                out, rc = "", -9
+            attempt = {"attempt_id": uuid.uuid4().hex, "run_id": run_id, "task": name,
+                       "rep": rep, "arm": arm, "model": model, "started_at": t0}
+            attempts_path = resdir / "attempts.jsonl"
+            _append_attempt(attempts_path, {**attempt, "state": "started"})
+            out, rc, state = _invoke(
+                [sys.executable, "-m", "hermes_cli.main", "chat", "--query", q,
+                 "--quiet", "--max-turns", "30", "--accept-hooks", "--model", model],
+                cwd=work, env=env, capture_output=True, text=True,
+                encoding="utf-8", errors="replace", timeout=600)
             dt = time.time() - t0
+            _append_attempt(attempts_path, {**attempt, "state": state, "exit": rc, "wall_s": round(dt, 1)})
             if rc != 0 and not out.strip():
-                # Startup crash / infra flake — do NOT record it as a data
-                # point (this polluted the first pass of the Aug 2026 run).
-                print(f"[{arm}/{model}] {run_id} INFRA-CRASH exit={rc} "
-                      f"{dt:.0f}s — not recorded, will retry on resume", flush=True)
+                # Keep conditional task cells resume-compatible, but retain every failed attempt
+                # separately so retries cannot hide launch failures, timeouts or their elapsed time.
+                print(f"[{arm}/{model}] {run_id} {state} exit={rc} "
+                      f"{dt:.0f}s — attempt recorded, will retry on resume", flush=True)
                 continue
-            rec = {"run_id": run_id, "task": name, "rep": rep, "arm": arm,
+            rec = {"attempt_id": attempt["attempt_id"], "run_id": run_id, "task": name, "rep": rep, "arm": arm,
                    "model": model, "wall_s": round(dt, 1), "exit": rc,
                    "tail": "\n".join(out.splitlines()[-12:])}
             with open(meta_path, "a", encoding="utf-8") as f:
@@ -263,6 +319,7 @@ def report(models):
         print(f"\n================ MODEL: {model} ================")
         table = {}
         for arm in ("baseline", "fixes"):
+            _report_attempts(mdir / arm / "attempts.jsonl", arm)
             meta_path = mdir / arm / "meta.jsonl"
             if not meta_path.exists():
                 continue

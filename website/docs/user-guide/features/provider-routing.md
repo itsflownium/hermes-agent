@@ -127,6 +127,33 @@ with or without the `openrouter/` prefix). The override follows the model the ag
 own pins. Edit `config.yaml` directly for these keys: model ids contain dots, which `hermes config set`
 reads as path separators.
 
+### Per-model performance and price controls
+
+Model entries also accept OpenRouter's optional controls:
+
+```yaml
+provider_routing:
+  models:
+    "moonshotai/kimi-k2.6":
+      sort: {by: price, partition: model}
+      preferred_min_throughput: {p50: 30, p90: 15}
+      preferred_max_latency: 3
+      max_price: {prompt: 2, completion: 8}
+      allow_fallbacks: false
+      zdr: true
+      quantizations: [fp8, bf16]
+```
+
+Throughput is tokens/second; latency is seconds. Both are preferences, not service guarantees.
+They accept a number or percentile keys `p50`, `p75`, `p90`, `p99`. `max_price` filters endpoints;
+prompt/completion values are dollars per million tokens. A restrictive filter can leave no endpoint.
+`allow_fallbacks` controls OpenRouter's endpoint fallbacks, independently of Hermes' fallback chain.
+`enforce_distillable_text` is also supported. Invalid values are omitted; explicit `false` and zero survive.
+Structured `sort` works globally or per model; advanced controls above are per-model only.
+Per-model entries are read for the current model when building requests, while flat constructor
+preferences keep the session's existing lifetime. These settings do not change prompts or measure
+provider performance locally. See [OpenRouter's field definitions](https://openrouter.ai/docs/guides/routing/provider-selection).
+
 ## Practical Examples
 
 ### Optimize for Cost
