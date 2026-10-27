@@ -58,13 +58,24 @@ FAILURE_TOLERANT_TOOL_NAMES = frozenset({
     "terminal", "execute_code", "process_manage", "process", "browser_navigate", "web_extract",
 })
 
-# A successful call to one of these marks progress for every failing signature still counted
-# this turn: the next retry is a new experiment (edit -> re-run), not a replay.
+# Execution or a file repair can make the next retry a new experiment. Updating plans,
+# memories, skills, messages or schedules does not repair an unrelated failed tool call.
 PROGRESS_RESET_TOOL_NAMES = frozenset({
     "write_file", "patch", "terminal", "execute_code", "browser_click", "browser_type", "browser_press",
-    "browser_navigate", "process_manage", "process", "delegate_task", "send_message", "cronjob",
-    "cronjob_manage", "todo", "todo_list", "memory", "skill_manage",
+    "browser_navigate", "process_manage", "process", "delegate_task",
 })
+
+# A state-changing operation can repair its own family (for example removing a memory
+# frees room for a failed add), without replenishing unrelated execution failures.
+_SCOPED_PROGRESS_RESETS = {
+    "todo": ("todo", "todo_list"),
+    "todo_list": ("todo", "todo_list"),
+    "memory": ("memory",),
+    "skill_manage": ("skill_manage", "skill_view", "skills_list"),
+    "send_message": ("send_message",),
+    "cronjob": ("cronjob", "cronjob_manage"),
+    "cronjob_manage": ("cronjob", "cronjob_manage"),
+}
 
 _BOOL_FIELDS = ("warnings_enabled", "hard_stop_enabled", "non_interactive_hard_stop_enabled")
 # Threshold field -> (nested section, nested key). The flat legacy key is the field name itself.
@@ -427,11 +438,9 @@ class ToolCallGuardrailController:
 
         self._exact_failure_counts.pop(signature, None)
         self._same_tool_failure_counts.pop(tool_name, None)
-        # A successful mutation is progress for every failing signature still counted
-        # this turn. Pure loops never mutate between attempts, so the replay detector keeps its teeth.
-        if tool_name in PROGRESS_RESET_TOOL_NAMES or file_mutation_result_landed(tool_name, result):
-            self._progress_since_failure.update(dict.fromkeys(self._exact_failure_counts, True))
-            self._same_tool_failure_counts.clear()
+        # Preserve edit -> re-run recovery without letting unrelated bookkeeping replenish
+        # every failure budget. A successful retry still clears its own counts above.
+        self._record_progress(tool_name, result)
         if not self._is_idempotent(tool_name):
             self._no_progress.pop(signature, None)
             return ToolGuardrailDecision(tool_name=tool_name, signature=signature)
@@ -446,6 +455,20 @@ class ToolCallGuardrailController:
 
     def _is_idempotent(self, tool_name: str) -> bool:
         return tool_name not in self.config.mutating_tools and tool_name in self.config.idempotent_tools
+
+    def _record_progress(self, tool_name: str, result: str | None) -> None:
+        if tool_name in PROGRESS_RESET_TOOL_NAMES or file_mutation_result_landed(tool_name, result):
+            self._progress_since_failure.update(dict.fromkeys(self._exact_failure_counts, True))
+            self._same_tool_failure_counts.clear()
+            return
+        related = _SCOPED_PROGRESS_RESETS.get(tool_name)
+        if not related:
+            return
+        for signature in self._exact_failure_counts:
+            if signature.tool_name in related:
+                self._progress_since_failure[signature] = True
+        for related_tool in related:
+            self._same_tool_failure_counts.pop(related_tool, None)
 
     def observe_call(
         self, tool_name: str, args: Mapping[str, Any] | None, result: str | None,
