@@ -53,6 +53,8 @@ def launch(args, source: Path, arm: str, case: str, base_url: str) -> dict:
         for key, value in os.environ.items()
         if key in {"PATH", "LANG", "LC_ALL", "SSL_CERT_FILE"}
     }
+    if getattr(args, "precise_correction", False) and case == "user_correction":
+        command.append("--precise-correction")
     environment.update(TZ="UTC", PYTHONHASHSEED="0", PYTHONUNBUFFERED="1")
     environment["PATH"] = (
         str(Path(sys.executable).parent) + os.pathsep + environment.get("PATH", "")

@@ -12,10 +12,26 @@ import tempfile
 
 if __package__:
     from .model_proxy import MODEL, MAX_OUTPUT
-    from .model_tasks import CASES, INPUTS, OFFLINE, PROMPTS, grade, seed
+    from .model_tasks import (
+        CASES,
+        INPUTS,
+        OFFLINE,
+        PRECISE_CORRECTION,
+        PROMPTS,
+        grade,
+        seed,
+    )
 else:
     from model_proxy import MODEL, MAX_OUTPUT
-    from model_tasks import CASES, INPUTS, OFFLINE, PROMPTS, grade, seed
+    from model_tasks import (
+        CASES,
+        INPUTS,
+        OFFLINE,
+        PRECISE_CORRECTION,
+        PROMPTS,
+        grade,
+        seed,
+    )
 
 
 def hermes(args, root: Path, prompts: list[str]) -> dict:
@@ -152,6 +168,7 @@ def main() -> None:
     parser.add_argument("--bun", type=Path, required=True)
     parser.add_argument("--pi", type=Path, required=True)
     parser.add_argument("--base-url", required=True)
+    parser.add_argument("--precise-correction", action="store_true")
     args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix="real-model-task-") as directory:
         root = Path(directory)
@@ -162,7 +179,12 @@ def main() -> None:
             HERMES_HOME=str(root / "profile"),
             HERMES_RUNTIME_DIR=str(root / "runtime"),
         )
-        prompts = [prompt + OFFLINE for prompt in PROMPTS[args.case]]
+        selected = (
+            PRECISE_CORRECTION
+            if args.precise_correction and args.case == "user_correction"
+            else PROMPTS[args.case]
+        )
+        prompts = [prompt + OFFLINE for prompt in selected]
         result = (
             hermes(args, root, prompts)
             if args.arm == "hermes"

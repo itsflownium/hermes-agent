@@ -83,3 +83,36 @@ rules, shared model/settings/ledger, and all earlier failures. Shuffle seed is
 Small samples and nonidentical prompts/tool surfaces still preclude an overall
 product ranking. The provider can report reasoning tokens despite the common
 requested setting; retain that usage rather than claiming no reasoning occurred.
+
+## Oracle correction and completed-terminal follow-up
+
+The correction prompt in the first two protocols did not explicitly require a
+flat root object, although its frozen oracle did. One follow-up answer uses a
+nested object with the right corrected values and fails that shape requirement.
+Keep the original strict 11/12, 10/12, 8/12 and follow-up counts, but do not use the
+ambiguous correction row to rank task quality. Excluding that row, the initial
+five-task executions are original Hermes 10/10, updated Hermes 9/10 and OpenBot
+6/10. The readback follow-up is 9/10 on those unchanged five tasks. This is not a
+retroactive regrade that converts a failure into a product win.
+
+A subsequent named protocol (`--protocol terminal`) supplies an explicit exact
+root JSON schema to both products through `PRECISE_CORRECTION`; every other prompt,
+input and acceptance rule stays unchanged. Predeclare 13 launches: one fresh
+current-Hermes and OpenBot run for each of all six tasks, plus one unchanged
+before-Hermes recovery control. The before source is `42489936`; shuffle seed is
+20261029. Both products retain the same 16-request per-launch cap, model/settings
+and 150-second per-turn limit. Keep all earlier rows and the oracle ambiguity.
+
+The product change covers tasks performed entirely through completed terminal
+commands. Their known exit codes can enable the same one-per-turn Bot Chat review;
+successful exit alone does not verify requested output files. Other task IDs cannot
+enable a turn's review. Text/file-read turns are unchanged; a read-only terminal
+command may now incur one review. No command is automatically repeated.
+
+The shared $5 authority and all earlier reservations remain intact. Before this
+additional protocol, the internal reservation ceiling increases from $4.50 to
+$4.95 and the global request-count guard from 400 to 500. This allows the paired
+cases within the user's existing authority; per-task effort does not increase.
+The ledger records this extension, never refunds an earlier reservation, and
+refuses any configured ceiling above $5. Provider-reported cost remains separate
+from conservative reservations and is not an invoice.

@@ -19,6 +19,10 @@ CASES = (
     "missing_input",
 )
 OFFLINE = " Work only inside this workspace, without network access, package installation or delegation."
+PRECISE_CORRECTION = [
+    'Create priorities.json with exactly this root JSON object: {"limit":17,"unit":"minutes"}. Do not add a wrapper, array or other properties.',
+    'Correction: change the root limit to 43 and keep the unit minutes. priorities.json must contain exactly {"limit":43,"unit":"minutes"}. Also create CHANGELOG.md recording the change from 17 to 43.',
+]
 INPUTS = {
     "data_summary": {
         "orders.csv": "id,status,cents\na,paid,1250\nb,pending,900\nc,paid,2750\na,paid,1250\n"

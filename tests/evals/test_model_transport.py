@@ -7,6 +7,19 @@ from evals.bot_system_benchmark.model_proxy import PortalProxy
 from tests.fakes.fake_llm_provider import FakeLLMServer, Text, ToolCall
 
 
+def test_a_protocol_extension_cannot_raise_the_users_spending_authority(tmp_path):
+    credentials = {"base_url": "http://127.0.0.1:9/v1", "api_key": "fixture-local-only"}
+    pricing = {"prompt": "0.0000001", "completion": "0.0000005"}
+    with pytest.raises(ValueError, match="authority"):
+        PortalProxy(
+            credentials,
+            pricing,
+            tmp_path / "ledger.json",
+            allow_local=True,
+            reservation_ceiling="5.01",
+        )
+
+
 def test_exhausted_shared_ledger_never_reaches_the_provider(tmp_path):
     with FakeLLMServer([Text("must not be called")]) as upstream:
         credentials = {"base_url": upstream.base_url, "api_key": "fixture-local-only"}

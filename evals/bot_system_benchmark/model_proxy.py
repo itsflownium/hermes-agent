@@ -51,7 +51,14 @@ def stream_response(payload: dict) -> bytes:
 
 class PortalProxy(AbstractContextManager):
     def __init__(
-        self, credentials: dict, pricing: dict, ledger_path: Path, *, allow_local=False
+        self,
+        credentials: dict,
+        pricing: dict,
+        ledger_path: Path,
+        *,
+        allow_local=False,
+        reservation_ceiling="4.50",
+        request_limit=400,
     ):
         base = credentials["base_url"].rstrip("/")
         parsed = urlparse(base)
@@ -72,6 +79,15 @@ class PortalProxy(AbstractContextManager):
             Decimal(pricing["completion"]), Decimal(original.get("completion", "0"))
         )
         self.ledger_path = ledger_path
+        self.reservation_ceiling = Decimal(reservation_ceiling)
+        self.request_limit = request_limit
+        if (
+            not 0 < self.reservation_ceiling <= Decimal("5.00")
+            or not 0 < request_limit <= 500
+        ):
+            raise ValueError(
+                "Evaluation guard exceeds the user's $5 authority or request limit"
+            )
         self.lock = threading.Lock()
         self.label = "unassigned"
         self.ledger = {
@@ -91,6 +107,22 @@ class PortalProxy(AbstractContextManager):
                 or self.ledger.get("authorized_cap_usd") != "5.00"
             ):
                 raise ValueError("Existing budget ledger has incompatible authority")
+        if (
+            self.ledger.get("reservation_ceiling_usd") != str(self.reservation_ceiling)
+            or self.ledger.get("request_limit", 400) != self.request_limit
+        ):
+            self.ledger.setdefault("guard_history", []).append(
+                {
+                    "previous_ceiling_usd": self.ledger.get("reservation_ceiling_usd"),
+                    "ceiling_usd": str(self.reservation_ceiling),
+                    "request_limit": self.request_limit,
+                    "note": "Predeclared protocol extension under the same $5 authority; no reservations refunded.",
+                }
+            )
+        self.ledger.update(
+            reservation_ceiling_usd=str(self.reservation_ceiling),
+            request_limit=self.request_limit,
+        )
         owner = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -116,8 +148,8 @@ class PortalProxy(AbstractContextManager):
                 row["launch"] == self.label for row in self.ledger["requests"]
             )
             if (
-                total + amount > Decimal("4.50")
-                or len(self.ledger["requests"]) >= 400
+                total + amount > self.reservation_ceiling
+                or len(self.ledger["requests"]) >= self.request_limit
                 or launch_count >= 16
             ):
                 return None

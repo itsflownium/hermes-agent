@@ -11,13 +11,13 @@ import sys
 
 if __package__:
     from .model_proxy import PortalProxy, digest
-    from .model_tasks import CASES, INPUTS, PROMPTS
+    from .model_tasks import CASES, INPUTS, PRECISE_CORRECTION, PROMPTS
     from .run_bot_mode_cycle import git, verify_before
     from .run_model_tasks import credentials_and_model, launch
     from .task_backend import runtime_metadata
 else:
     from model_proxy import PortalProxy, digest
-    from model_tasks import CASES, INPUTS, PROMPTS
+    from model_tasks import CASES, INPUTS, PRECISE_CORRECTION, PROMPTS
     from run_bot_mode_cycle import git, verify_before
     from run_model_tasks import credentials_and_model, launch
     from task_backend import runtime_metadata
@@ -33,6 +33,9 @@ def main() -> None:
     parser.add_argument("--pi", type=Path, required=True)
     parser.add_argument("--budget-ledger", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument(
+        "--protocol", choices=("readback", "terminal"), default="readback"
+    )
     args = parser.parse_args()
     if git(args.after, "status", "--porcelain"):
         raise ValueError("Commit the source and follow-up plan before inference")
@@ -45,11 +48,23 @@ def main() -> None:
         for variant in ("hermes_before", "openbot")
         for case in ("data_summary", "user_correction")
     ]
-    random.Random(20261028).shuffle(plan)
+    args.precise_correction = args.protocol == "terminal"
+    selected_prompts = PROMPTS
+    if args.precise_correction:
+        plan = [
+            (variant, case, 1)
+            for variant in ("hermes_after", "openbot")
+            for case in CASES
+        ]
+        plan.append(("hermes_before", "transient_recovery", 1))
+        selected_prompts = {**PROMPTS, "user_correction": PRECISE_CORRECTION}
+    random.Random(20261029 if args.precise_correction else 20261028).shuffle(plan)
     args.output.mkdir(parents=True, exist_ok=False)
     credentials, model = credentials_and_model()
     report = {
-        "protocol": "model-readback-followup-v1",
+        "protocol": "model-terminal-explicit-schema-v1"
+        if args.precise_correction
+        else "model-readback-followup-v1",
         "state": "running",
         "planned_launches": len(plan),
         "model": model,
@@ -61,7 +76,7 @@ def main() -> None:
             "openbot": "f91535fb0c8d6fd0a63911ec6e4b67154fd85ebe",
         },
         "before_python_blobs_verified": checked,
-        "fixture_sha256": digest({"inputs": INPUTS, "prompts": PROMPTS}),
+        "fixture_sha256": digest({"inputs": INPUTS, "prompts": selected_prompts}),
         "planned": [
             {"variant": variant, "case": case, "repeat": repeat}
             for variant, case, repeat in plan
@@ -70,7 +85,14 @@ def main() -> None:
     }
     output = args.output / "receipts.json"
     output.write_text(json.dumps(report, indent=2) + "\n")
-    with PortalProxy(credentials, model["pricing"], args.budget_ledger) as proxy:
+    guards = (
+        {"reservation_ceiling": "4.95", "request_limit": 500}
+        if args.precise_correction
+        else {}
+    )
+    with PortalProxy(
+        credentials, model["pricing"], args.budget_ledger, **guards
+    ) as proxy:
         for index, (variant, case, repeat) in enumerate(plan, 1):
             label = f"{args.output.name}/{variant}/{case}/{repeat}"
             row = {
