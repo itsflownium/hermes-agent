@@ -38,13 +38,25 @@ cached with explicit bounds; query answers, catalog entries, schemas and scope
 authority are not cached. Eviction and cold initialization can have other costs.
 These timings have no confidence intervals and do not predict whole-bot latency.
 
-## Initial catalog construction
+## Implementation-specific initial preparation
 
-The harness also records the first catalog-build sample, before per-query
-warmups. These are **one sample per arm/size**, with different initialization
-work in each implementation, rather than a distribution or an agent-startup test.
-They are included to make the cold cost visible: Hermes's initial build did not
-improve here and remains substantially more expensive than OpenBot's.
+The receipt field `catalog_build_ms` records **one sample per arm/size** before
+per-query warmups. The timed operations are different:
+
+- Hermes calls production `build_catalog`: it snapshots active registry source
+  labels, constructs search text, splits/stems words, and creates live catalog
+  entries. Fixture definitions and registry registration precede this timer.
+- OpenBot's adapter reshapes supplied fixture records and inserts them into the
+  exported catalog array. Its production module import, original built-in
+  catalog creation and schema initialization precede this timer. Its word
+  processing and ranking occur during searches.
+
+Hermes's corpus statistics and candidate index are also constructed lazily on
+search, outside this initial-build timer. These numbers are therefore
+**implementation-specific preparation diagnostics, not an equal-work startup
+comparison**. They cannot establish a relative whole-agent startup speed. A
+common-boundary time-to-first-usable-result distribution has not been measured.
+Hermes's own recorded preparation cost did not improve in this run.
 
 | Catalog size | Hermes before cache, ms | Hermes optimized, ms | OpenBot, ms |
 |---|---:|---:|---:|

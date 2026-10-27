@@ -31,6 +31,11 @@ the license of every runtime dependency still apply to those external sources.
   catalog data; ranking, query validation, schema selection and guidance remain
   unchanged. Import time is excluded from per-query latency and included in
   process wall time. Neither adapter invokes a deferred tool.
+- The single `catalog_build_ms` diagnostic has unequal work boundaries:
+  Hermes runs its production source-label/tokenization/catalog build; OpenBot's
+  adapter maps and inserts fixture records after importing the production module.
+  It is not a comparative agent-startup measurement. See the scorecard for the
+  exact boundaries; the per-query timing and fixture criteria are separate.
 - Two warmups and 15 measured calls per query produce raw timing samples,
   median and nearest-rank p95. Arm order uses a fixed random seed. Processes
   run sequentially; timings are host-specific and have no inference component.
