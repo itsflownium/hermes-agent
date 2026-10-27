@@ -324,6 +324,10 @@ to any progressive-disclosure design, not specific to this implementation:
   live tool registry. Bounded immutable tokenization results are cached by
   exact text, so edited descriptions and parameter names get new tokens;
   catalog entries, schemas and rankings are rebuilt from live definitions.
+  Source labels use one fresh registry snapshot per build, with the active
+  profile and session overlays; registry scope resolution does not repeat
+  for every tool. The snapshot scans the active registry once even when
+  the caller supplies a smaller tool subset.
 - **The catalog is scoped to the session's toolsets.** `tool_search`,
   `tool_describe`, and `tool_call` only ever see and invoke tools the
   session was actually granted. A subagent, kanban worker, or gateway

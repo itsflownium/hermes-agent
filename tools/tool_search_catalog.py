@@ -4,6 +4,7 @@ defs plus the budgeted, byte-stable catalog listing embedded in the bridge."""
 from __future__ import annotations
 
 import functools
+import logging
 import math
 import re
 import threading
@@ -12,6 +13,8 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
 import snowballstemmer
+
+logger = logging.getLogger(__name__)
 
 # Reserved bridge names: a user/plugin/MCP tool may not take them (registry override
 # protection rejects such registrations).
@@ -118,23 +121,34 @@ def _entry_search_text(td: dict[str, Any], source_label: str = "") -> str:
     return f"{name_words} {extra} {fn.get('description', '') or ''} {param_names}"
 
 
-def _classify_source(name: str) -> tuple[str, str]:
-    """Return (source_kind, source_name) for a registered tool name."""
-    toolset = _registry_toolset(name)
-    if toolset is None:
-        return ("other", "")
-    return ("mcp" if toolset.startswith("mcp-") else "plugin", toolset)
+def _registry_sources() -> dict[str, tuple[str, str]]:
+    """Snapshot source labels using the active profile and session overlays.
+
+    The registry resolves scope once for the whole view without probing availability.
+    Only labels come from this view; caller-supplied definitions control catalog exposure.
+    """
+    try:
+        from tools.registry import registry
+        return {
+            entry.name: ("mcp" if entry.toolset.startswith("mcp-") else "plugin", entry.toolset)
+            for entry in registry.get_all_entries()
+            if isinstance(entry.toolset, str)
+        }
+    except Exception:
+        logger.debug("Unable to snapshot tool source labels", exc_info=True)
+        return {}
 
 
 def build_catalog(tool_defs: list[dict[str, Any]]) -> list[CatalogEntry]:
     """Build the deferred-tool catalog from the deferrable subset of tool-defs."""
+    sources = _registry_sources()
     catalog: list[CatalogEntry] = []
     for td in tool_defs:
         fn = _fn(td)
         name = fn.get("name", "")
         if not name:
             continue
-        source, source_name = _classify_source(name)
+        source, source_name = sources.get(name, ("other", ""))
         # Index the human-facing label ("linear", not "mcp-linear").
         source_label = _listing_group_label(source_name) if source_name else ""
         catalog.append(CatalogEntry(
@@ -298,13 +312,13 @@ def build_catalog_listing_with_form(
     (over budget even summarized -> text is None). Ordering is deterministic (sorted groups
     and tools) so the block is byte-stable — the request prefix stays cacheable. Degradation
     is PER SERVER, largest first: one huge server must not cost a small one its listing."""
+    sources = _registry_sources()
     groups: dict[str, list[tuple[str, str]]] = {}
     for td in deferrable:
         fn = _fn(td)
         name = fn.get("name", "")
         if name:
-            # _classify_source gives ("other", "") when unregistered; the label of "" is "other".
-            label = _listing_group_label(_classify_source(name)[1])
+            label = _listing_group_label(sources.get(name, ("other", ""))[1])
             groups.setdefault(label, []).append((name, _short_desc(fn.get("description", ""))))
     unavailable = hidden_declared_sources()
     if not groups and not unavailable:

@@ -21,7 +21,10 @@ the license of every runtime dependency still apply to those external sources.
   alone is not accepted as schema readiness.
   The total is a component conformance count, not an agent leaderboard score.
 - Both adapters run the actual production search and result projection. Hermes
-  includes its per-call catalog rebuild. OpenBot replaces only its exported
+  registers the fixture in a fresh real tool registry before measurement and
+  includes its per-call catalog rebuild and source classification. The registry
+  size is reported; the setup does not time an empty registry as a loaded one.
+  OpenBot replaces only its exported
   catalog data; ranking, query validation, schema selection and guidance remain
   unchanged. Import time is excluded from per-query latency and included in
   process wall time. Neither adapter invokes a deferred tool.

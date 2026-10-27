@@ -7,6 +7,7 @@ fixture paths are supplied by the caller; no model or connected service is used.
 from __future__ import annotations
 
 import json
+import re
 import sys
 import time
 from pathlib import Path
@@ -18,6 +19,8 @@ def benchmark(request: dict[str, Any]) -> dict[str, Any]:
     if not (repository / "tools" / "tool_search_catalog.py").is_file():
         raise ValueError("repository_path must name the Hermes checkout")
     sys.path.insert(0, str(repository))
+    from tools import registry as registry_module
+    from tools.registry import ToolRegistry
     from tools.tool_search import _shared_tool_record
     from tools.tool_search_catalog import build_catalog, search_catalog
     try:
@@ -39,6 +42,16 @@ def benchmark(request: dict[str, Any]) -> dict[str, Any]:
         }}
         for entry in request["catalog"]
     ]
+    registry = ToolRegistry()
+    for definition in definitions:
+        function = definition["function"]
+        # A source label already present as a name token adds no extra search
+        # text. Archive filler entries share their leading "archive" namespace.
+        namespace = re.split(r"[_.:-]", function["name"], maxsplit=1)[0]
+        registry.register(name=function["name"], toolset=f"mcp-{namespace}",
+                          schema=function, handler=lambda args: "{}")
+    registry_module.registry = registry
+    registry_size = len(registry.get_all_entries())
 
     started = time.perf_counter_ns()
     build_catalog(definitions)
@@ -77,10 +90,11 @@ def benchmark(request: dict[str, Any]) -> dict[str, Any]:
     return {
         "implementation": "hermes",
         "repository_path": str(repository),
-        "seam": "synthetic definitions passed to production catalog/ranking and its current model-visible projection",
+        "seam": "synthetic definitions registered in a fresh real ToolRegistry and passed to production catalog/ranking and its current model-visible projection; handlers are never invoked",
         "timing_boundary": "stateless catalog build, production ranking/projection and neutral schema extraction; JSON report serialization excluded",
         "catalog_build_ms": catalog_build_ms,
         "catalog_size": len(definitions),
+        "registry_size": registry_size,
         "results": results,
     }
 
