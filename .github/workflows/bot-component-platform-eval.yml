@@ -46,6 +46,7 @@ jobs:
           set -o pipefail
           scripts/run_tests.sh \
             tests/agent/test_bot_mode_completion_review.py \
+            tests/agent/test_bot_mode_completion_readback.py \
             tests/agent/test_todo_completion_guard.py \
             tests/agent/test_task_iteration_budget.py \
             tests/agent/test_verification_continuation_budget.py \
@@ -56,6 +57,8 @@ jobs:
             tests/tools/test_bot_mode_dm.py \
             tests/tools/test_bot_mode_canonical_chat_resolution.py \
             tests/tools/test_bot_desktop_resources.py \
+            tests/tools/test_file_tools.py \
+            tests/tools/test_file_read_guards.py \
             tests/tools/test_mcp_unknown_write_failure.py \
             tests/tools/test_todo_atomic_capacity.py \
             tests/tools/test_required_delegation_isolation.py \

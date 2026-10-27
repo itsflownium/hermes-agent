@@ -93,6 +93,14 @@ final response. The Bot compares the original request with its tool results,
 finishes missing authorized deliverables, or explains a blocker. Existing
 checklist completion checks handle turns that maintain `todo_list`.
 
+The reminder includes short excerpts of current local outputs, using the same
+read guards and redaction as an explicit file read. It asks the Bot to compare
+actual contents with the requested structure and values. Excerpts are bounded
+and may be incomplete; remote files and document extraction need explicit reads.
+They add some context tokens and do not grant permission to overwrite a file that
+the Bot has not fully read. Numbered file previews also label their display-only
+line prefixes, so those prefixes can be distinguished from real data separators.
+
 This can add one model request when the file work was already complete; finishing
 missing work can take more requests within the existing iteration allowance.
 The reminder does not extend that allowance or certify correctness. A budget

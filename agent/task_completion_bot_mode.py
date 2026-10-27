@@ -19,12 +19,21 @@ def artifact_completion_nudge(agent) -> str | None:
     ) is not True:
         return None
     agent._artifact_completion_reviewed = True
+    from agent.task_completion_readback import completion_readback
+
     return (
-        "[System note: Before finishing this Bot Chat task, review the original user's request against "
-        "the actual tool results and outputs you created. Check every requested deliverable, including "
-        "supporting files and delivery steps; a successful edit alone does not prove the entire task is complete. "
-        "If something requested is missing, finish it within the existing permissions and iteration budget. "
-        "If blocked, explain the blocker and what remains. Do not invent verification, create unnecessary work, "
-        "or repeat external actions whose outcomes are unknown. If everything is already satisfied, give the "
-        "final answer now. This is the only file-completion review reminder for this turn.]"
+        (
+            "[System note: Before finishing this Bot Chat task, review the original user's request against "
+            "the actual tool results and outputs you created. Check every requested deliverable, including "
+            "supporting files and delivery steps; a successful edit alone does not prove the entire task is complete. "
+            "Compare the saved contents with the requested structure and values, rather than treating a "
+            "successful write or valid syntax as proof of correctness. Check that unrelated values were preserved. "
+            "Use focused reads or relevant checks when the evidence is insufficient. "
+            "If something requested is missing or wrong, finish it within the existing permissions and iteration budget. "
+            "If blocked, explain the blocker and what remains. Do not invent verification, create unnecessary work, "
+            "or repeat external actions whose outcomes are unknown. If everything is already satisfied, give the "
+            "final answer now. This is the only file-completion review reminder for this turn.]"
+        )
+        + "\n"
+        + completion_readback(agent)
     )

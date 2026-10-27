@@ -23,7 +23,7 @@ failure. These authored cases are unblinded and small; repeated runs are not
 independent estimates of general task success probability.
 
 Both native loops use a local proxy to the same actual Nous model. It sets
-temperature 0, disables reasoning, caps each response at 2,048 tokens and buffers
+temperature 0, requests disabled reasoning, caps each response at 2,048 tokens and buffers
 the same upstream nonstreaming response into SSE when required by a native client.
 The proxy never scripts model decisions. System prompts, tool schemas and native
 tools differ. Every variant has a common cap of 16 model requests per launch
@@ -52,3 +52,34 @@ task when fixing a real defect. Do not change prompts, grading rules or select a
 best attempt to claim a win. Report individual task results and gaps. Elapsed times
 include different native setup work and proxy buffering; no product speed ranking
 or weighted overall bot score follows.
+
+## Follow-up after the initial 36 launches
+
+The initial run is retained in full: original Hermes passes 11/12 executions,
+updated Hermes 10/12 and OpenBot/Pi 8/12. Updated Hermes misses one data-summary
+execution (a generated parser uses the display separator instead of the file's
+delimiter) and one user-correction execution (wrong structure/values). Original
+Hermes misses one correction execution. OpenBot misses one summary, both code
+repair executions and one recovery deliverable. Successful code
+repair and transient retry are reported separately from omitted output files.
+
+The subsequent improvement clarifies numbered file previews and supplies bounded,
+policy-checked current local file excerpts to the existing Bot Chat completion review.
+It preserves the per-turn reminder limit, permissions and iteration allowance.
+Excerpts are untrusted, possibly partial data, not semantic proof; they cannot
+establish whole-file read knowledge for overwrite permission.
+Document extraction and remote backends require explicit scoped reads; the reminder
+does not start automatic remote I/O. At most three excerpts of 1,600 characters
+each fit a shared 6,000-character envelope. A missing active task identity prevents
+automatic reads.
+
+`run_model_readback.py` fixes a 16-launch follow-up before inference: repeat all six
+unchanged tasks twice on the new source (12 launches), plus one fresh unchanged
+before and OpenBot execution for each affected task (four launches). The before
+archive is `5bdbd90f`, whose production Python matches the initial `b315888d` model
+run. Verify every tracked Python blob; retain the same fixture digest and grading
+rules, shared model/settings/ledger, and all earlier failures. Shuffle seed is
+20261028. No best-of selection or replacement of the initial results is allowed.
+Small samples and nonidentical prompts/tool surfaces still preclude an overall
+product ranking. The provider can report reasoning tokens despite the common
+requested setting; retain that usage rather than claiming no reasoning occurred.
