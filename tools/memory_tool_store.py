@@ -192,6 +192,8 @@ class MemoryStore:
         self.memory_char_limit, self.user_char_limit = memory_char_limit, user_char_limit
         self.memory_enabled, self.user_profile_enabled = memory_enabled, user_profile_enabled
         self._system_prompt_snapshot: dict[str, str] = {"memory": "", "user": ""}
+        self._snapshot_paths: dict[str, Path] = {}
+        self._snapshot_home_key: str | None = None
         self._consolidation_failures = 0  # per turn; reset by reset_consolidation_failures()
 
     # Per-turn counter of failed at-capacity consolidation attempts; reset at each turn boundary by
@@ -225,20 +227,13 @@ class MemoryStore:
         Threat hits are replaced by a ``[BLOCKED: …]`` placeholder in the SNAPSHOT only;
         live lists keep the raw text so the user can see and remove poisoned entries
         (dropping them silently would hide the attack)."""
-        from tools.threat_patterns import scan_for_threats
-
-        def _sanitize(entry, filename):
-            # Strict scope, same as writes; empty / already-blocked entries pass through.
-            findings = scan_for_threats(entry, scope="strict") if entry and not entry.startswith("[BLOCKED:") else None
-            if not findings:
-                return entry
-            logger.warning("Memory entry from %s blocked at load time: %s", filename, ", ".join(findings))
-            return (f"[BLOCKED: {filename} entry contained threat pattern(s): {', '.join(findings)}. "
-                    f"Removed from system prompt; use memory(action=remove, target='{_store_target(filename)}') "
-                    f"to delete the original.]")
+        from tools.memory_prompt_snapshot import sanitize_entry
+        from hermes_constants import hermes_home_key
+        self._snapshot_home_key = hermes_home_key()
 
         for target in ("memory", "user"):
             path = self._path_for(target)
+            self._snapshot_paths[target] = path
             from hermes_constants import mkdir_under_hermes_home
 
             mkdir_under_hermes_home(path.parent)
@@ -252,7 +247,7 @@ class MemoryStore:
                 logger.warning("%s exceeds its char limit on load: %d/%d chars. Entries stay loaded; "
                                "further additions are blocked until it is back under the limit.",
                                path.name, count, limit)
-            self._system_prompt_snapshot[target] = self._render_block(target, [_sanitize(e, path.name) for e in entries])
+            self._system_prompt_snapshot[target] = self._render_block(target, [sanitize_entry(e, path.name, target) for e in entries])
 
     @staticmethod
     @contextmanager

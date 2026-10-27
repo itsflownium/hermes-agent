@@ -54,13 +54,15 @@ The format includes:
 - Individual entries separated by `§` (section sign) delimiters
 - Entries can be multiline
 
-**Frozen snapshot pattern:** The system prompt injection is captured once at session start and never changes mid-session. This is intentional — it preserves the LLM's prefix cache for performance. When the agent adds/removes memory entries during a session, the changes are persisted to disk immediately but won't appear in the system prompt until the next session starts. Tool responses always show the live state.
+**Frozen snapshot pattern:** The system prompt injection is captured once at session start and never changes mid-session, preserving the LLM's prefix cache. Native `MEMORY.md` and `USER.md` corrections made by any session reach the next user turn through a bounded context note. The newest note supersedes older native facts, including deletions, without rewriting the cached prefix or previous messages. Unreadable or oversized live files produce an unverified refresh note. External providers keep their own recall behavior.
+
+Successful memory writes commit the native store. When an external provider is configured, the result separately reports its callback as `acknowledged`, `unconfirmed`, or `failed`. Older callbacks returning no acknowledgment are `unconfirmed`. A mirror failure does not undo the native write and is not a reason to repeat it. These receipts do not certify erasure from active history, backups or unrelated derived stores.
 
 ## Memory Needs Session Boundaries
 
 The whole memory system is built around the moment a session **ends**: `MEMORY.md` and `USER.md` carry the essentials into the next session, and `session_search` fills the gaps once the old context is gone. Inside a single session none of that machinery has a reason to run — everything important is still in the live context, so the agent rarely consults `session_search` and mostly compacts memory entries instead of curating them.
 
-This matters on messaging platforms (Telegram, Discord, etc.), where a chat is deliberately [one continuous session](../sessions.md#session-continuity) that survives restarts, gateway crashes, and machine reboots. Shutting the machine down overnight does **not** end the session — the next message picks it up exactly where it left off. If you never reset, a chat can run for weeks as a single session: convenient, but it grows expensive (compaction runs repeatedly over an ever-longer history) and the learning loop of *forget → recall from memory → search past sessions* almost never gets to fire. Fresh memory entries also stay invisible to the running session because of the frozen snapshot above.
+This matters on messaging platforms (Telegram, Discord, etc.), where a chat is deliberately [one continuous session](../sessions.md#session-continuity) that survives restarts, gateway crashes, and machine reboots. Shutting the machine down overnight does **not** end the session — the next message picks it up exactly where it left off. If you never reset, a chat can run for weeks as a single session: convenient, but it grows expensive (compaction runs repeatedly over an ever-longer history) and the learning loop of *forget → recall from memory → search past sessions* rarely gets to fire. Native correction notes refresh current facts while historical conversation still accumulates.
 
 **Practice:** run `/new` at natural boundaries — a finished task, a change of topic, the start of a day. Each boundary is when memory pays off: the agent re-reads the updated `MEMORY.md`/`USER.md` snapshot, starts from a cheap short context, and reaches for `session_search` when it actually needs history. On the CLI this mostly takes care of itself (every invocation is a new session); on gateways the boundary is yours to create.
 
@@ -83,7 +85,7 @@ The most common report looks like this: you tell the agent where something lives
 
 4. **Check memory is enabled.** `memory.memory_enabled: false` (or `memory` under `agent.disabled_toolsets`) removes the tool entirely — the model cannot save anything, whatever it says. See [Configuration](#configuration).
 
-5. **Remember the snapshot is frozen at session start.** A fact saved in the current session is visible to the *next* session, not to another session that was already running. Start a new session (`/new`, or a fresh CLI invocation) after the write.
+5. **Check the next user turn.** The system snapshot stays frozen, while a native-memory change note supplies current facts to running sessions on their next turn. A new session (`/new`, or a fresh CLI invocation) also starts with the current snapshot. If refresh is unverified, check file readability and size; external-provider recall follows that provider's own synchronization.
 
 Two things that do **not** make the agent remember: variables in `.env` (those are credentials and settings, not memory) and facts mentioned in passing without asking for them to be saved. For a location the agent needs on every run of a recurring task, a [skill](./skills.md) is often the better home than a memory entry — it loads only when relevant and does not compete for the 2,200-character budget.
 

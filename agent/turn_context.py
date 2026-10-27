@@ -856,6 +856,12 @@ def _collect_pre_llm_call_context(
     return ""
 
 
+def _stage_changed_context_notes(agent: Any, prompt: Any, messages: Any) -> None:
+    from agent.memory_delta import stage_native_memory_note
+    stage_skills_index_note(agent, prompt, messages)
+    stage_native_memory_note(agent, prompt, messages)
+
+
 def _merge_gateway_notes(
     agent: Any, messages: list[Any], current_turn_user_idx: int, plugin_user_context: str
 ) -> str:
@@ -867,7 +873,7 @@ def _merge_gateway_notes(
     _turn_notes = "\n\n".join(
         part for part in (consume_gateway_turn_context_notes(agent), pop_plugin_notices(agent),
                           consume_surface_switch_note(agent),
-                          consume_skills_index_note(agent)) if part
+                          consume_skills_index_note(agent), _pop_turn_note(agent, "_native_memory_note")) if part
     )
     if not _turn_notes:
         return plugin_user_context
@@ -1189,7 +1195,7 @@ def build_turn_context(
     )
     # Every turn, not only on a prompt restore: a long-lived agent (CLI, TUI, Desktop) keeps its
     # prompt in memory for the whole conversation and would never re-check its skills index.
-    stage_skills_index_note(agent, active_system_prompt, messages)
+    _stage_changed_context_notes(agent, active_system_prompt, messages)
     plugin_user_context = _merge_gateway_notes(
         agent, messages, current_turn_user_idx, plugin_user_context
     )

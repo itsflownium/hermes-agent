@@ -151,7 +151,7 @@ def _memory(agent, args: dict, ctx: InlineToolContext) -> Any:
     # Mirror built-in memory writes to external providers; gating lives in
     # MemoryManager.notify_memory_tool_write.
     if agent._memory_manager:
-        agent._memory_manager.notify_memory_tool_write(
+        receipts = agent._memory_manager.notify_memory_tool_write(
             result,
             args,
             build_metadata=lambda: agent._build_memory_write_metadata(
@@ -159,6 +159,8 @@ def _memory(agent, args: dict, ctx: InlineToolContext) -> Any:
                 tool_call_id=ctx.tool_call_id,
             ),
         )
+        from agent.memory_write_receipts import attach_receipts
+        result = attach_receipts(result, receipts)
     return result
 
 
