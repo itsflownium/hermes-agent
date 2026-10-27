@@ -1115,12 +1115,15 @@ Create a zip archive of your Hermes configuration, skills, sessions, and data. T
 |--------|-------------|
 | `-o`, `--output <path>` | Output path for the zip file (default: `~/hermes-backup-<timestamp>.zip`). |
 | `-q`, `--quick` | Quick snapshot: only critical state files (config.yaml, state.db, .env, auth, cron jobs). Much faster than a full backup. |
+| `--verify` | Read every full-archive member back and check decompression and CRC before publishing the zip or pruning older backups. Cannot be combined with `--quick`. |
 | `-l`, `--label <name>` | Label for the snapshot (only used with `--quick`). |
 | `-k`, `--keep <N>` | After a full backup, delete older `hermes-backup-*.zip` files in the output directory beyond the newest N (default 3; `0` keeps everything). Custom-named zips are never touched. |
 
 The backup uses SQLite's `backup()` API for safe copying, so it works correctly even when Hermes is running (WAL-mode safe).
 
 **Exit status:** `0` only when every selected file landed in the archive. If some files could not be added (`Backup incomplete: …`), the zip is kept so the rest can still be restored, but the command exits `1` — a cron or systemd timer will not report a partial archive as success, and `--keep` pruning is skipped so older complete archives survive. `2` means another backup was already running.
+
+With `--verify`, a failed integrity check exits `1`, discards the new temporary archive, preserves an existing archive at the output path, and skips retention. Verification adds a full decompression/read pass. It checks archive readability, not a complete restore or application health; use a separate restore exercise for that assurance.
 
 **What's excluded from the zip:**
 
@@ -1137,6 +1140,7 @@ The backup uses SQLite's `backup()` API for safe copying, so it works correctly 
 ```bash
 hermes backup                           # Full backup to ~/hermes-backup-*.zip
 hermes backup -o ~/backups/hermes.zip   # Full backup to specific path
+hermes backup --verify                  # Check archive integrity before publishing
 hermes backup --quick                   # Quick state-only snapshot
 hermes backup --quick --label "pre-upgrade"  # Quick snapshot with label
 ```

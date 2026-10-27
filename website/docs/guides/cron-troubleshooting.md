@@ -22,17 +22,19 @@ Look for the job and confirm its state is `[active]` (not `[paused]` or `[comple
 
 ### Check 2: Confirm the schedule is correct
 
-A misformatted schedule silently defaults to one-shot or is rejected entirely. Test your expression:
+An invalid schedule is rejected. Confirm that the expression has the intended recurrence:
 
 | Your expression | Should evaluate to |
 |----------------|-------------------|
 | `0 9 * * *` | 9:00 AM every day |
 | `0 9 * * 1` | 9:00 AM every Monday |
 | `every 2h` | Every 2 hours from now |
-| `30m` | 30 minutes from now |
-| `2025-06-01T09:00:00` | June 1, 2025 at 9:00 AM UTC |
+| `30m` | Every 30 minutes |
+| `in 30m` | Once, 30 minutes from now |
+| `2027-06-01T09:00:00` | June 1, 2027 at 9:00 AM in the profile's configured timezone |
+| `2027-06-01T09:00:00Z` | June 1, 2027 at 9:00 AM UTC |
 
-If the job fires once and then disappears from the list, it's a one-shot schedule (`30m`, `1d`, or an ISO timestamp) — expected behavior.
+An `in 30m` delay or ISO timestamp schedules one execution. Bare durations such as `30m` and `1d` repeat; also check a job's finite repeat limit when it stops running.
 
 ### Check 3: Is the gateway running?
 
@@ -44,7 +46,7 @@ If you're expecting jobs to fire automatically, you need a running gateway (`her
 
 ### Check 4: Check the system clock and timezone
 
-Jobs use the local timezone. If your machine's clock is wrong or in a different timezone than expected, jobs will fire at the wrong times. Verify:
+Cron expressions and timestamps without an explicit offset use the profile's configured Hermes timezone. If none is configured, Hermes uses the host's local timezone. Verify the profile's `timezone` setting and system clock:
 
 ```bash
 date
