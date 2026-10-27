@@ -60,3 +60,55 @@ Unknown MCP outcomes require inspecting external state; the change provides no
 exactly-once ledger or cross-process crash recovery. Existing annotated read-only
 retry and pre-dispatch OAuth recovery semantics are retained. The optional shared
 iteration pool is not a cap on physical model attempts, paid tools or dollars.
+
+## Recorded results
+
+Before: `789ac8778cc5c82d391dae8ffc9d2b44b86388a4`. After: `e748982b0e5248d5873279d6d89870aff77205a0`.
+The runner verified all **21,463 tracked baseline contents**,
+with the declared PowerShell line-ending normalization, and started with a clean
+after tree. All **48/48 planned subprocesses completed**, with no worker errors,
+no deadlines and no omitted cases. Platform: Darwin arm64,
+Python 3.14.9.
+
+| Fixed contract, three fresh-process repetitions | Previous draft | Updated Hermes |
+|---|---:|---:|
+| Premature final: both output files correct | 0/3 | 3/3 |
+| Already complete: no extra continuation | 3/3 | 3/3 |
+| Missing input: honest blocker, no fabricated files | 3/3 | 3/3 |
+| Cancelled work: no continuation | 3/3 | 3/3 |
+| Historical status query: no write or continuation | 3/3 | 3/3 |
+| Budget exhausted: unfinished work reported | 0/3 | 3/3 |
+| Committed MCP write / invalid reply: outcome unknown | 0/3 | 3/3 |
+| Successful MCP write: one effect, normal success | 3/3 | 3/3 |
+
+Completion has six distinct contracts: **4/6 before, 6/6 after** in each
+repetition (12/18 and 18/18 executions). Two cases grade completed output
+files: **1/2 before, 2/2 after** in each repetition. The other four cases test
+honest stopping and boundaries. Repetition checks reproducibility; these are not
+independent natural-task samples or a statistically estimated general success rate.
+
+The local MCP server committed exactly one effect in **all six executions per
+arm**. Neither version automatically replayed the measured write. The improvement
+is an explicit unknown outcome and reconciliation requirement after an invalid
+reply, not a newly demonstrated reduction in duplicates. Both retain normal
+success on valid replies. The blocked completion case takes two ordinary requests
+before and three after; the reminder adds a request even when work is blocked. All completion launches retained the sent message
+prefix and tool schemas, including the resumed status-only conversation.
+
+The broader canonical selection passed **3,203 tests, 0 failures, 15 platform
+skips across 308 files**, with `HERMES_TEST_FILE_RETRIES=0`. An earlier expanded
+run exposed 24 failures because the new uncertainty message hid original MCP
+validation details; those diagnostics were preserved and the same selection
+rerun successfully. A focused selection also passed 53/53 checks. All 13 blocking
+repository checks passed on the implementation commit. The full repository suite,
+native Windows/Linux runs, provider crashes and an OpenBot model/task comparison
+were not run. Existing separately documented upstream shell-wrapper failures are
+outside this selection.
+
+[Complete raw receipts](results/task-recovery.json.gz), including the before
+arm's failing contracts, diagnostics and every scheduled launch. Uncompressed
+SHA-256: `de5ebce49704363e5516098413da44932ff78c616b2f7d16ce83a4ab20098ed4`.
+
+The previous OpenBot search/queue and live MCP comparisons remain in
+[SCORECARD.md](SCORECARD.md) and [ONLINE.md](ONLINE.md); their pinned revisions
+and boundaries are unchanged. There is no combined overall bot score.

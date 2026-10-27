@@ -112,3 +112,5 @@ To compare agent task performance, a separate run must control model version,
 reasoning effort, provider/runtime route, tools, permissions, spending and time
 limits, and grade final artifacts against predeclared outcomes. Those results
 must not be inferred from this offline component benchmark.
+
+Completion/recovery changes also have a separate [fixed fault-contract protocol and receipts](TASK_RECOVERY.md). These real-agent/local-transport probes use scripted responses and provide no overall OpenBot task score.

@@ -137,3 +137,7 @@ source and remain outside these selections. A macOS path-alias assertion in the
 expanded delegation selection reproduced on unchanged earlier code; the test now
 compares resolved paths to the same database file. The final expanded selection
 passes without file retries.
+
+## Subsequent completion and recovery validation
+
+A separate [before/after fault-contract run](TASK_RECOVERY.md) compares draft `789ac877` with `e748982b`: six distinct completion contracts improve from 4/6 to 6/6 in each of three fresh-process repeats. The invalid-reply write fixture gains an explicit unknown outcome; both versions commit one effect without replay. The broader updated selection passes 3,203 tests across 308 files, with 15 platform skips and no failures or file retries. These fixtures do not supply an OpenBot task-completion score or change the measured search timings above.
