@@ -24,8 +24,11 @@ in real production traffic.
   verification).
 - **Resume-safe.** Completed `run_id`s in `meta.jsonl` are skipped, so a
   killed battery continues where it left off. Startup crashes (nonzero exit
-  with empty output) are NOT recorded — they retry on resume instead of
-  polluting cells (this bit the first pass of the Aug 2026 run).
+  with empty output) and timeouts retry on resume without entering the
+  conditional task cells. Every launch is separately recorded in
+  `attempts.jsonl` before execution, followed by its completion, agent failure,
+  timeout or infrastructure-failure outcome. Retries receive distinct attempt
+  IDs while retaining the same logical `run_id`.
 
 ## Setup
 
@@ -43,7 +46,9 @@ in real production traffic.
    ```
 
    The runner writes a per-run Relay `plugins.toml` and points the native SDK
-   integration at it; no Hermes observability plugin needs to be enabled.
+   integration at it, using the supported Relay 0.10 observability schema.
+   Trace export is file-only; OpenTelemetry auto-export is explicitly disabled.
+   No Hermes observability plugin needs to be enabled.
 
 2. Prepare the two trees:
 
@@ -71,6 +76,13 @@ python3 ab_eval.py report --models "anthropic/claude-sonnet-4.5,qwen/qwen3-coder
 
 ## Reading the results
 
+- The `ATTEMPTS` summary includes every launched process, including failed
+  attempts later retried successfully. `incomplete` means a start has no
+  terminal receipt (the process may still be running or have been interrupted).
+  Malformed ledger rows are reported as `invalid_records`. The existing task
+  table is conditional on recorded task results, so inspect both views before
+  making a reliability or performance claim. Older runs without an attempt
+  ledger retain their historical task table; their launch denominator is unknown.
 - Weak models are the signal. Strong models recover from most induced errors
   in one turn, so expect parity there; the fixes' win shows up as fewer
   turns/tool calls/errors on the weak model. The Aug 2026 batch measured
