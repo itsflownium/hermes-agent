@@ -176,7 +176,9 @@ def test_multimodal_turn_carries_one_note_without_changing_prior_rows(monkeypatc
     assert not stage_native_memory_note(agent, prompt, messages)
 
 
-@pytest.mark.parametrize("oversized", ["x" * 66_000, "<" * 6_000])
+@pytest.mark.parametrize(
+    "oversized", ["x" * 66_000, "<" * 6_000], ids=["read-byte-limit", "encoded-payload-limit"]
+)
 def test_read_and_encoded_payload_budgets_do_not_truncate_facts(oversized):
     store, prompt, path = _loaded_store()
     agent = SimpleNamespace(_memory_store=store)
