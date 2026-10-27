@@ -34,6 +34,9 @@ DELEGATION_DEFAULTS = {
     "inherit_mcp_toolsets": True,
     # Per-subagent iteration cap (own budget, independent of the parent's).
     "max_iterations": 250,
+    # Optional task-wide ceiling on ordinary loop iterations across parent + descendants.
+    # 0 keeps independent budgets. Not a dollar/physical-call cap (grace, refunds, auxiliary calls).
+    "shared_iteration_limit": 0,
     # Hard per-summary char ceiling on subagent results, layered on the dynamic budget (each
     # summary is sized to the parent's remaining context headroom; trimmed text spills to
     # ~/.hermes/cache/delegation/ with a head+tail window + read_file offset footer, nothing

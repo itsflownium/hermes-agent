@@ -2134,6 +2134,30 @@ The injected block covers:
 
 The gate is independent of `tool_use_enforcement` — either can be on without the other. The guidance is chosen once at session start keyed on the model name, so the system prompt stays byte-stable (and prompt-cache-friendly) for the life of the conversation. Gemini/Gemma are excluded from the auto list because they receive the more specific Google operational guidance; Claude is excluded because it doesn't exhibit these failure modes — opt any model in with `true` or a substring list.
 
+## Checklist completion checks
+
+When the agent changes `todo_list` during a turn and then tries to finish with
+pending or in-progress items, Hermes gives it one bounded continuation to review
+the outstanding deliverables. The note is appended to the conversation; earlier
+prompt bytes and tool schemas stay unchanged. Historical lists that were only
+read do not trigger this check. Cancelled items are not unfinished work.
+
+```yaml
+agent:
+  todo_completion_nudges: 1  # 0 disables; integers above 3 are capped at 3
+```
+
+`agent.task_completion_guidance: false` also disables the continuation. The check
+does not extend the iteration budget or grant permissions. If that budget ends
+while the checklist remains unfinished, Hermes reports the remaining item IDs
+instead of reusing the premature completion claim. A turn result's
+`task_checklist` field is a self-report, with `completion_verified: false`; it is
+not proof that an artifact or external action passed acceptance checks.
+
+Checklist writes above 256 unique items now fail without changing the existing
+list or revision, instead of silently dropping items. A whitespace-only content
+merge is also rejected atomically. Remove older items before adding more.
+
 ## Tool-Loop Guardrails
 
 Hermes detects when the agent is stuck in an unproductive tool-calling loop — the same tool call failing repeatedly, the same tool failing over and over, or an idempotent call returning the same result with no progress. By default it injects a **warning** into the tool result so the model self-corrects. Interactive CLI, TUI, Desktop, and ACP sessions remain warning-only because a person can intervene; unattended gateway and cron sessions enable hard stops by default.
@@ -3059,6 +3083,7 @@ delegation:
   #     provider:
   #       sort: throughput
   max_concurrent_children: 3                # Parallel children per batch (floor 1, no ceiling). Also via DELEGATION_MAX_CONCURRENT_CHILDREN env var.
+  shared_iteration_limit: 0                 # Optional ordinary-loop ceiling across the parent and descendants; 0 preserves independent budgets.
   worktree_isolation: false                 # Give each child its own git worktree branched from HEAD (local backend + git repos only; inspired by Muse Code). See Subagent Delegation → Worktree Isolation.
   max_spawn_depth: 1                        # Delegation tree depth cap (1-3, clamped). 1 = flat (default): parent spawns leaves that cannot delegate. 2 = orchestrator children can spawn leaf grandchildren. 3 = three levels.
   orchestrator_enabled: true                # Global kill switch. When false, role="orchestrator" is ignored and every child is forced to leaf regardless of max_spawn_depth.

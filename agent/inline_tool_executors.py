@@ -252,11 +252,18 @@ def _setup_mcp_shim(agent, args: dict, ctx: InlineToolContext) -> Any:
 
 
 # Order is the historical if/elif order of ``execute_tool_calls_sequential``.
+def _todo(agent, args: dict, ctx: InlineToolContext) -> Any:
+    from tools.todo_tool import todo_tool
+    store = agent._todo_store
+    before = store.snapshot()["revision"] if store is not None else None
+    result = todo_tool(todos=args.get("todos"), merge=args.get("merge", False), store=store)
+    if store is not None and store.snapshot()["revision"] != before:
+        agent._todo_written_this_turn = True
+    return result
+
+
 _RAW_INLINE_TOOL_EXECUTORS: dict[str, InlineToolExecutor] = {
-    "todo_list": _tool(
-        "tools.todo_tool", "todo_tool", ("todos", "todos"), ("merge", "merge", False),
-        store=lambda agent, ctx: agent._todo_store,
-    ),
+    "todo_list": _todo,
     # Bot Mode teammate DM is injected, not registered: only a canonical Bot
     # Chat session carries the schema, and the tool re-gates on the title.
     "message_agent": _tool(

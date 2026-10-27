@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 from agent.conversation_compression import recover_rotated_compression_session
-from agent.iteration_budget import IterationBudget
+from agent.task_budget import reset_iteration_budget
 from agent.memory_context import build_memory_context_block
 from agent.memory_provider import is_trivial_prompt
 from agent.message_content import flatten_message_text
@@ -615,6 +615,7 @@ _PER_TURN_RESET_STATE: tuple[tuple[str, Any], ...] = (
     ("_iteration_budget_warning_injected", False),
     ("_run_budget_wrapup_injected", False), ("_verification_stop_nudges", 0),
     ("_pre_verify_nudges", 0), ("_lsp_turn_end_notes", 0),
+    ("_todo_written_this_turn", False), ("_todo_completion_nudges", 0),
 )
 
 
@@ -657,7 +658,7 @@ def _reset_per_turn_agent_state(agent: Any) -> None:
         # gateway: init ran before this turn's callbacks / viewer print sink
         agent._replay_startup_warnings()
 
-    agent.iteration_budget = IterationBudget(agent.max_iterations)
+    agent.iteration_budget = reset_iteration_budget(agent)
     # Wall-clock run budget: stamped only when configured (one wrap-up notice per run).
     agent._run_budget_started_at = (
         time.time() if getattr(agent, "run_budget_seconds", None) else None

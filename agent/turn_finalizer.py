@@ -21,6 +21,8 @@ from agent.message_content import flatten_message_text
 from agent.message_metadata import append_message, stamp_message_timestamp
 from agent.message_sanitization import _sanitize_surrogates
 from agent.served_model import result_model_fields
+from agent.task_completion import completion_budget_fallback, completion_result_fields
+from agent.task_budget import task_budget_result_fields
 
 # Verification-continuation nudges (verify-on-stop / pre_verify) must be stripped from
 # returned/live history to avoid role-alternation breaks; the assistant response is
@@ -141,8 +143,8 @@ def _resolve_budget_fallback(
             # preserve it rather than make another fallible call. The explicit pending
             # value is the provenance guard; unrelated error exits never enter here.
             # Previewed only if the reused candidate was actually streamed as interim.
-            final_response = _pending_verification_response
-            if _pending_verification_response_previewed:
+            final_response = completion_budget_fallback(agent, _pending_verification_response)
+            if _pending_verification_response_previewed and final_response == _pending_verification_response:
                 agent._response_was_previewed = True
                 # Reuses the candidate the user already saw sealed as an interim (#130396).
                 agent._reused_response_text = final_response
@@ -769,7 +771,7 @@ def finalize_turn(
         "response_reused": bool(final_response) and final_response == getattr(agent, "_reused_response_text", None),
         "model": agent.model,
         # requested_model / served_model: proxy-reported deployment or Hermes' own fallback route.
-        **result_model_fields(agent),
+        **result_model_fields(agent), **completion_result_fields(agent), **task_budget_result_fields(agent),
         "provider": agent.provider,
         "base_url": agent.base_url,
         **{key: getattr(agent, f"session_{key}") for key in _SESSION_TOKEN_KEYS},

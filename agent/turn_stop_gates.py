@@ -1,8 +1,8 @@
 """Text-response stop gates for the conversation turn loop.
 
-When the model stops with a text answer, four gates may instead append the answer as an
+When the model stops with a text answer, five gates may instead append the answer as an
 interim row plus a user-role nudge and continue the turn: late language-server verdicts on this
-turn's edits (a durable row, see ``_late_lsp_verdicts``), verify-on-stop (#65919),
+turn's edits (a durable row, see ``_late_lsp_verdicts``), unfinished checklist work, verify-on-stop (#65919),
 the ``pre_verify`` plugin hook after code edits, and the kanban worker terminal-tool guard.
 Each keeps the candidate answer as a budget-exhaustion fallback
 (``pending_verification_response``) and clears ``final_response`` so the finalizer can tell
@@ -141,9 +141,9 @@ def apply_stop_gates(
     holds. Hook lookups are imported lazily from their origin modules (tests patch them
     there)."""
 
-    def _continue(nudge: str, flag: str) -> StopGateVerdict:
+    def _continue(nudge: str, flag: Optional[str]) -> StopGateVerdict:
         """Append the synthetic nudge row and hand the turn back to the loop."""
-        append_message(messages, {"role": "user", "content": nudge, flag: True})
+        append_message(messages, {"role": "user", "content": nudge, **({flag: True} if flag else {})})
         agent._session_messages = messages
         # Keep the answer only as a budget-exhaustion fallback; clear ``final_response`` so
         # the finalizer can tell this gate from error exits. Mark previewed only if the
@@ -174,6 +174,14 @@ def apply_stop_gates(
             pending_verification_response=final_response,
             pending_verification_response_previewed=agent._interim_content_was_streamed(final_response or ""),
         )
+
+    from agent.task_completion import completion_nudge
+    checklist_note = completion_nudge(agent)
+    if checklist_note:
+        final_msg["finish_reason"] = "task_completion_required"
+        _append_interim_answer(agent, final_msg, messages, conversation_history, "checklist interim flush failed")
+        # A durable note, like late LSP verdicts: later requests retain the bytes already sent.
+        return _continue(checklist_note, None)
 
     _verify_nudge = _verify_on_stop_nudge(agent)
     if _verify_nudge:

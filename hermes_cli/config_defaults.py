@@ -183,6 +183,8 @@ DEFAULT_CONFIG = {
         # "Finish the job" prompt block for all models: don't stop at a stub, never fabricate output
         # when the real path is blocked. ~80 cached tokens. False disables.
         "task_completion_guidance": True,
+        # Bounded continuation when a checklist changed this turn still contains unfinished work; 0 disables.
+        "todo_completion_nudges": 1,
         # Prompt block for all models steering independent tool calls (reads, searches, fetches,
         # read-only commands) into one batched turn; the runtime already runs them concurrently. ~70
         # cached tokens. False disables.
