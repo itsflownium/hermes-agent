@@ -664,6 +664,14 @@ delegation:
   worktree_isolation: true   # default: false
 ```
 
+Use `worktree_isolation: required` for editing tasks that must not start in a
+shared checkout. The worker is refused before its conversation starts if the
+backend is nonlocal, a committed Git base cannot be resolved, creation fails,
+or the child's initial working directory cannot be verified. Results include
+`isolation_required`, `cwd_verified`, and the pinned `base_commit` in the
+worktree receipt. Boolean `true` retains best-effort behavior; `false` disables
+worktrees. Worktrees isolate initial working copies, not OS file access.
+
 With isolation on:
 
 - Each child starts its terminal in `<repo>/.worktrees/subagent-<id>` on its

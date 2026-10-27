@@ -87,13 +87,16 @@ def create_subagent_worktree(parent_cwd: Optional[str], subagent_id: Optional[st
         _ensure_gitignore_entry(repo_root)
         base = _run_git(["rev-parse", "HEAD"], cwd=repo_root)
         base_commit = base.stdout.strip() if base.returncode == 0 else ""
+        if not base_commit:
+            logger.warning("subagent worktree: no base commit could be resolved")
+            return None
         # The checkout runs the repo-named smudge filter; skip isolation when it cannot be neutralized.
         from hermes_cli._subprocess_compat import noninteractive_repo_git_env
         add_env = noninteractive_repo_git_env(repo_root)
         if add_env is None:
             logger.warning("subagent worktree: filter discovery failed; not creating a worktree")
             return None
-        result = _run_git(["worktree", "add", str(wt_path), "-b", branch, "HEAD"], cwd=repo_root, env=add_env)
+        result = _run_git(["worktree", "add", str(wt_path), "-b", branch, base_commit], cwd=repo_root, env=add_env)
     except Exception as exc:
         logger.warning("subagent worktree: creation failed: %s", exc)
         return None
@@ -110,7 +113,10 @@ def create_subagent_worktree(parent_cwd: Optional[str], subagent_id: Optional[st
 def _base_payload(info: dict[str, str]) -> dict[str, Any]:
     """Result-entry schema the parent expects (no creation-side internals)."""
     return {"path": info.get("path", ""), "branch": info.get("branch", ""),
-            "commits": 0, "dirty": False, "pruned": False}
+            "commits": 0, "dirty": False, "pruned": False,
+            **({"isolation_required": True, "cwd_verified": info.get("cwd_verified") == "true",
+                "base_commit": info.get("base_commit", "")}
+               if info.get("isolation_mode") == "required" else {})}
 
 
 def mark_worktree_payload_unproven(payload: dict[str, Any], reason: str, *,
