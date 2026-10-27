@@ -114,3 +114,9 @@ limits, and grade final artifacts against predeclared outcomes. Those results
 must not be inferred from this offline component benchmark.
 
 Completion/recovery changes also have a separate [fixed fault-contract protocol and receipts](TASK_RECOVERY.md). These real-agent/local-transport probes use scripted responses and provide no overall OpenBot task score.
+
+The expanded [OpenBot native-backend comparison](OPENBOT_BACKEND.md) additionally
+runs upstream-authored service/provider recovery tests, the actual pinned Pi
+runtime on matched artifact cases, original Hermes and the Bot Chat completion
+and first-reply fixes. All initial failures and request overhead are disclosed.
+Actual model-driven tasks have a separate [fixed protocol](MODEL_TASKS.md).

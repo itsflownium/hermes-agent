@@ -141,3 +141,17 @@ passes without file retries.
 ## Subsequent completion and recovery validation
 
 A separate [before/after fault-contract run](TASK_RECOVERY.md) compares draft `789ac877` with `e748982b`: six distinct completion contracts improve from 4/6 to 6/6 in each of three fresh-process repeats. The invalid-reply write fixture gains an explicit unknown outcome; both versions commit one effect without replay. The broader updated selection passes 3,203 tests across 308 files, with 15 platform skips and no failures or file retries. These fixtures do not supply an OpenBot task-completion score or change the measured search timings above.
+
+## Expanded native backend and Bot Mode evidence
+
+[OPENBOT_BACKEND.md](OPENBOT_BACKEND.md) now exercises OpenBot's real service,
+provider protocol and pinned Pi runtime. All five upstream-authored backend
+scripts pass. The initial matched artifact test ties at five of six contracts.
+Updated Hermes Bot Chats subsequently pass six of six; original Hermes and
+OpenBot pass five of six, in three fresh-process repetitions each. The missing
+output recovery is scripted, and already-complete file work costs one extra
+model request. Forced concurrent-reply stability improves from 0/20 to 20/20 on
+Hermes. The broader local selection passes 3,672 tests across 361 files, with
+50 platform skips, no failures or retries. These results leave the earlier search
+latencies unchanged and do not create an overall bot score. Native platform and
+real-model task evidence is reported separately.
