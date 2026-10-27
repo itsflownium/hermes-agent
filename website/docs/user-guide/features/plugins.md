@@ -1135,7 +1135,7 @@ else:
 
 **Signature:** `ctx.call_mcp(server: str, tool: str, arguments: dict | None = None, timeout: float = 30) -> dict`
 
-Returns a stable envelope: `{"ok": True, "result": ...}` (plus `structuredContent` when the server provides it) or `{"ok": False, "error": "..."}`. Results over ~64 KB are truncated and flagged with `"truncated": True`.
+Returns a stable envelope: `{"ok": True, "result": ...}` or `{"ok": False, "error": "..."}`. The normalized MCP result's `structuredContent`, vendor `_meta` and `structuredContentTruncated` fields are retained on both successes and errors. Structured scalars keep their JSON types, including explicit `null`; an intact object or array duplicated in text is forwarded once. Results over ~64 KB are truncated and flagged with `"truncated": True`. Oversized errors keep `"ok": False` with a bounded error message.
 
 ### Security: default-off, per-server allowlist
 

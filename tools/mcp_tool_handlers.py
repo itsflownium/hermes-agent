@@ -8,6 +8,7 @@ import inspect
 import json
 import time
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from functools import partial
 from types import SimpleNamespace
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -565,10 +566,10 @@ def _error_result_text(result) -> str:
     return "".join(str(t) for t in texts if t)
 
 
-def _render_content_blocks(result, server_name: str) -> tuple[str, int, list[str]]:
+def _render_content_blocks(result, server_name: str) -> tuple[str, int, list[str], bool]:
     """Text passes through; image/audio blocks are cached (MEDIA: tags); resource blocks are
     materialized rather than silently dropped; unsupported blocks become an inline drop notice
-    (kimi-code#3227). Returns ``(text, usable_parts, image_paths)``: ``usable_parts`` counts REAL
+    (kimi-code#3227). Returns ``(text, usable_parts, image_paths, truncated)``: ``usable_parts`` counts REAL
     rendered blocks (whitespace-only text and drop notices excluded) for the structuredContent
     arbitration; ``image_paths`` are the files THIS call's image blocks were cached to — never
     parsed back out of the text, where a server-written ``MEDIA:`` line could name any local file."""
@@ -604,28 +605,58 @@ def _render_content_blocks(result, server_name: str) -> tuple[str, int, list[str
             # believing the tool returned less than it did, with no way to recover.
             parts.append(_render_mcp_dropped_block_notice(block, block_type))
     # Hard-cap pathological payloads; ordinary large results pass to spillover.
-    return _truncate_mcp_text_result("\n".join(parts)), usable_parts, image_paths
+    text = "\n".join(parts)
+    return _truncate_mcp_text_result(text), usable_parts, image_paths, len(text) > _MCP_HARD_RESULT_CAP_CHARS
 
 
-def _capped_structured_content(result):
-    """``structuredContent`` (or None); over the hard cap it degrades to the head+tail
-    truncated JSON string (multi-MB JSON flood guard)."""
+@dataclass(frozen=True)
+class _StructuredContent:
+    """Missing, intact JSON (including null/strings), or a lossy display preview."""
+
+    value: Any = _MISSING
+    truncated: bool = False
+
+
+def _capped_structured_content(result) -> _StructuredContent:
+    """Keep presence and truncation separate from the JSON value's type."""
     # Hard-cap pathological payloads before they propagate (#56059); ordinary large results pass untouched
     # to the spillover layer. Arbitration against ``content`` lives in _render_call_tool_result.
-    # Server-level `_meta` is also surfaced (ported from
-    # MoonshotAI/kimi-code#2596): servers return namespaced metadata there (validated contracts,
-    # browser-handoff payloads, ...) that was previously invisible to the agent. Protocol-reserved keys are
-    # dropped first (kimi-code#2600) — per the MCP spec's key-name rules a prefix is reserved when a
-    # `modelcontextprotocol` or `mcp` label is followed by at least one more label (e.g.
-    # `modelcontextprotocol.io/...`, `tools.mcp.com/...`); those carry host/protocol plumbing, not
-    # model-facing data. Unprefixed and vendor-namespaced keys (`com.example.mcp/...`) pass through — their
-    # semantics belong to the server.
-    structured = mcp_field(result, "structured_content", "structuredContent")
+    structured = mcp_field(result, "structured_content", "structuredContent", _MISSING)
+    # SDK optional fields default to None even when absent. Modern MCP also permits an explicit
+    # JSON null; pydantic records that presence independently of the default value (both SDK spellings).
+    fields = getattr(result, "model_fields_set", ()) or ()
+    if structured is None and not {"structured_content", "structuredContent"}.intersection(fields):
+        structured = _MISSING
+    if structured is _MISSING:
+        return _StructuredContent()
     try:
-        as_json = json.dumps(structured, ensure_ascii=False, default=str) if structured is not None else ""
+        as_json = json.dumps(structured, ensure_ascii=False, default=str)
     except (TypeError, ValueError):
-        return structured
-    return _truncate_mcp_text_result(as_json) if len(as_json) > _MCP_HARD_RESULT_CAP_CHARS else structured
+        return _StructuredContent(structured)
+    if len(as_json) > _MCP_HARD_RESULT_CAP_CHARS:
+        return _StructuredContent(_truncate_mcp_text_result(as_json), truncated=True)
+    return _StructuredContent(structured)
+
+
+def _same_json_value(left, right) -> bool:
+    """JSON equality without Python's bool/number coercion, including nested values."""
+    if type(left) is not type(right):
+        return False
+    if isinstance(left, dict):
+        return left.keys() == right.keys() and all(_same_json_value(left[key], right[key]) for key in left)
+    if isinstance(left, list):
+        return len(left) == len(right) and all(_same_json_value(a, b) for a, b in zip(left, right))
+    return left == right
+
+
+def _result_meta(result):
+    """Invalid vendor metadata must not erase otherwise usable structured output."""
+    meta = _strip_reserved_meta_keys(mcp_field(result, "meta", "meta"))
+    try:
+        json.dumps(meta, ensure_ascii=False)
+    except (TypeError, ValueError):
+        return None
+    return meta
 
 
 def _content_dual_emits_structured(result, structured) -> bool:
@@ -641,7 +672,7 @@ def _content_dual_emits_structured(result, structured) -> bool:
         if not text:
             continue
         try:
-            if json.loads(text) == structured:
+            if _same_json_value(json.loads(strip_unicode_tags(text)), structured):
                 return True
         except (TypeError, ValueError):
             continue
@@ -649,44 +680,44 @@ def _content_dual_emits_structured(result, structured) -> bool:
 
 
 def _render_call_tool_result(result, server_name: str, image_paths: Optional[list[str]] = None) -> str:
-    """Pure: ``CallToolResult`` -> handler JSON (``image_paths``, when given, receives the files this
-    call's image blocks were cached to). ``content`` and ``structuredContent`` are both
-    forwarded, except that a ``structuredContent`` whose JSON also sits verbatim in a text block
-    (the spec's backwards-compat dual-emit; compared as parsed JSON) is dropped, because that copy
-    would reach the model twice (kimi-code#3234). Any other usable text — a status line, a prose
-    summary, a reorganised rendering — keeps ``structuredContent`` alongside it (#115430): the
-    earlier "content wins whenever it rendered anything" rule irreversibly lost servers whose
-    data lived only in ``structuredContent``, while the residual duplicate for a faithful
-    reorganisation costs only tokens, so data-preservation wins. No richness or size heuristic is
-    used. ``structuredContent`` fills ``result`` when the blocks rendered effectively empty
-    (structuredContent-only servers); ``_meta`` minus reserved keys is always surfaced."""
-    if mcp_field(result, "is_error", "isError", False):
-        return tool_error(_sanitize_error(_truncate_mcp_text_result(_error_result_text(result) or "MCP tool returned an error")))
-    text_result, usable_parts, cached_images = _render_content_blocks(result, server_name)
-    if image_paths is not None:
-        image_paths.extend(cached_images)
+    """SDK-validated ``CallToolResult`` -> handler JSON; collect this call's cached image paths.
+
+    Structured values fill an empty ``result`` or accompany text as ``structuredContent``. Keep
+    scalar types (including explicit null), error details and vendor metadata. Preserve the established
+    object/array dual-emit dedup (#115430), but only when the displayed text is intact and carries the
+    same JSON types: Python's bool/number equality or a truncated display cannot prove equivalence.
+    """
+    is_error = mcp_field(result, "is_error", "isError", False)
+    text_truncated, usable_parts = False, 0
+    if is_error:
+        text_result = _sanitize_error(_truncate_mcp_text_result(_error_result_text(result) or "MCP tool returned an error"))
+        payload = json.loads(tool_error(text_result))
+    else:
+        text_result, usable_parts, cached_images, text_truncated = _render_content_blocks(result, server_name)
+        if image_paths is not None:
+            image_paths.extend(cached_images)
+        payload = {"result": text_result} if text_result else {}
     structured = _capped_structured_content(result)
-    meta = _strip_reserved_meta_keys(mcp_field(result, "meta", "meta"))
-    # A str here is the over-cap truncation stand-in (wire structuredContent is always an object): next to
-    # usable text it would be a second multi-MB copy — the flood #56059 caps — so it only fills an empty result.
-    if structured is not None and usable_parts > 0 and (isinstance(structured, str) or _content_dual_emits_structured(result, structured)):
-        structured = None
-    if structured is None and meta is None:
-        return json.dumps({"result": text_result}, ensure_ascii=False)
-    # Key order is part of the output: "result" leads when there is text, otherwise "_meta" precedes it.
-    payload: dict[str, Any] = {"result": text_result} if text_result else {}
-    # Cap structuredContent too — a malicious server could flood context via a multi-MB JSON payload
-    # (#56059). When the serialized form exceeds the hard cap, replace it with the truncated string (head +
-    # tail preserved) so it degrades gracefully instead of flooding downstream.
-    if structured is not None:
-        payload["structuredContent" if text_result else "result"] = structured
+    meta = _result_meta(result)
+    if (not is_error and not text_truncated and not structured.truncated and usable_parts > 0
+            and isinstance(structured.value, (dict, list)) and _content_dual_emits_structured(result, structured.value)):
+        structured = _StructuredContent()
+    if structured.truncated:
+        # Preserve the existing flood guard: a lossy preview only fills an empty result, never a
+        # second over-cap copy next to usable text. Its explicit tag cannot be confused with a JSON string.
+        if not text_result and not is_error:
+            payload["result"] = structured.value
+        payload["structuredContentTruncated"] = True
+    elif structured.value is not _MISSING:
+        payload["structuredContent" if text_result or is_error else "result"] = structured.value
     if meta is not None:
         payload["_meta"] = meta
-    payload.setdefault("result", text_result)
+    if not is_error:
+        payload.setdefault("result", text_result)
     try:
         return json.dumps(payload, ensure_ascii=False)
-    except (TypeError, ValueError):  # Non-serializable metadata: drop the extras, keep the call.
-        return json.dumps({"result": text_result}, ensure_ascii=False)
+    except (TypeError, ValueError):  # Malformed non-SDK stand-ins: retain the existing text fallback.
+        return tool_error(text_result) if is_error else json.dumps({"result": text_result}, ensure_ascii=False)
 
 
 def _make_tool_handler(server_name: str, tool_name: str, tool_timeout: float, *, native_images: bool = False):

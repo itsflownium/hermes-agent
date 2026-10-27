@@ -255,7 +255,7 @@ class TestContentStructuredArbitration:
         session.call_tool = AsyncMock(
             return_value=_FakeCallToolResult(content=[_FakeContentBlock("done")], structuredContent=big)
         )
-        assert json.loads(handler({})) == {"result": "done"}
+        assert json.loads(handler({})) == {"result": "done", "structuredContentTruncated": True}
 
     def test_summary_plus_data_keeps_structured(self, _patch_mcp_server):
         """#115430 reproducer shape: a status summary in content with the real data
