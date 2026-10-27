@@ -86,7 +86,9 @@ application or the provider CLIs. OpenBot source revision used in this run:
 
 Set the `BENCH_*` variables below to your external source and runtime locations.
 `BENCH_BEFORE_SRC` must contain the unchanged Hermes revision indicated by
-`--before-revision`; a source archive is accepted.
+`--before-revision`; a source archive is accepted. The latest speed rerun uses
+`b91a3b46c6fe0844de3939a33d90b1e4d85e02be`; the initial quality comparison uses
+`6a3838d8c9d4c9788f25721825dcd4cf80d76692`. Set `BENCH_BEFORE_REVISION` to match the supplied source.
 
 ```bash
 "$BENCH_PYTHON" evals/bot_system_benchmark/run.py \
@@ -95,7 +97,7 @@ Set the `BENCH_*` variables below to your external source and runtime locations.
   --tsx-loader "$BENCH_TSX_LOADER" \
   --hermes-source "$PWD" \
   --before-source "$BENCH_BEFORE_SRC" \
-  --before-revision 6a3838d8c9d4c9788f25721825dcd4cf80d76692 \
+  --before-revision "$BENCH_BEFORE_REVISION" \
   --openbot-source "$BENCH_OPENBOT_SRC" \
   --openbot-revision f91535fb0c8d6fd0a63911ec6e4b67154fd85ebe \
   --output "$BENCH_RECEIPTS"

@@ -1,86 +1,127 @@
-# Offline component comparison: Hermes and OpenBot.run
+# Offline search comparison: latest rerun
 
-Measured on 27 October 2026 on macOS ARM64, Python 3.14.9, Node v24.19.0 and tsx 4.23.15.
-This is a contributor-written synthetic component suite, with 88 initial cases and 40 additional request variants.
-It is not an independent benchmark or a blinded holdout. No model or API calls were made.
+Measured on 27 October 2026, macOS ARM64, Python 3.14.9, Node 24.19.0,
+tsx 4.23.15. This is a contributor-written synthetic component evaluation,
+not an independent benchmark or an overall bot ranking. No model or network
+calls occur in this offline run. Live MCP and the small Nous Portal memory
+smoke test are reported separately in [ONLINE.md](ONLINE.md).
 
-Both systems retrieved a relevant tool for every supported query and passed the queue contracts.
-Hermes ranked more relevant tools first and supplied more intact schemas. OpenBot was faster at every tested catalog size.
-These results establish component behavior; they do not establish overall bot superiority or higher real-task completion rates.
+The optimized Hermes median is much closer to OpenBot, but **OpenBot remains
+faster at all three catalog sizes**, including p95 in this run. At 1,024 tools,
+Hermes is 1.562 ms versus OpenBot's 1.216 ms: a 0.346 ms median gap. No claim
+of overall agent superiority follows from these results.
 
-## Discovery behavior
+## Warm search latency
 
-Each size (32, 256 and 1,024 tools) produced the same counts below. The 112 supported queries and 16 unavailable-capability queries are reported separately.
+Milliseconds, p50 / nearest-rank p95 over 15 measured calls per query after two
+warmups. All arms receive the same 128 queries and identical names, descriptions,
+and full parameter schemas. The fixture digests match the earlier published run.
+One benchmark process runs at a time, in a seeded order; no test suite or other
+owned CPU workload ran alongside the final measurements.
 
-| Measure | Hermes before | Hermes updated | OpenBot |
+| Catalog size | Hermes before cache p50 / p95 | Hermes optimized p50 / p95 | OpenBot p50 / p95 | Hermes median reduction |
+|---|---:|---:|---:|---:|
+| 32 | 0.144 / 0.164 | 0.079 / 0.171 | 0.047 / 0.061 | 44.9% |
+| 256 | 0.910 / 0.975 | 0.374 / 0.401 | 0.300 / 0.398 | 58.9% |
+| 1,024 | 3.858 / 6.056 | 1.562 / 2.918 | 1.216 / 1.511 | 59.5% |
+
+The before arm here is the immediately preceding `b91a3b46` implementation,
+which already has the earlier retrieval-quality fixes. This isolates the cache
+and candidate-index change. It is not the older `6a3838d8` baseline from the
+[initial scorecard](SCORECARD_INITIAL.md).
+
+The boundary includes fresh per-call catalog construction, active registry
+source classification, production ranking/projection, and neutral schema
+extraction. It excludes import time, full bridge eligibility/dispatch, inference,
+and tool execution. Immutable document metadata and corpus mathematics are
+cached with explicit bounds; query answers, catalog entries, schemas and scope
+authority are not cached. Eviction and cold initialization can have other costs.
+These timings have no confidence intervals and do not predict whole-bot latency.
+
+## Initial catalog construction
+
+The harness also records the first catalog-build sample, before per-query
+warmups. These are **one sample per arm/size**, with different initialization
+work in each implementation, rather than a distribution or an agent-startup test.
+They are included to make the cold cost visible: Hermes's initial build did not
+improve here and remains substantially more expensive than OpenBot's.
+
+| Catalog size | Hermes before cache, ms | Hermes optimized, ms | OpenBot, ms |
 |---|---:|---:|---:|
-| Relevant tool in first five results | 52/112 | 112/112 | 112/112 |
-| Relevant tool ranked first | 52/112 | 112/112 | 106/112 |
-| Intact parameter schema supplied for a relevant result | 0/112 | 112/112 | 104/112 |
-| Request-wrapper variants retrieve a relevant tool | 0/60 | 60/60 | 60/60 |
+| 32 | 2.394 | 4.367 | 0.056 |
+| 256 | 7.219 | 7.299 | 0.099 |
+| 1,024 | 26.902 | 27.133 | 0.250 |
+
+## Retrieval correctness
+
+Counts are identical at all three sizes. Hermes before and after the latest
+optimization return exactly the same names, order, and full schemas on all
+384 query/catalog combinations, not merely the same pass counts.
+
+| Measure | Hermes before cache | Hermes optimized | OpenBot |
+|---|---:|---:|---:|
+| Relevant tool in top five, supported queries | 112/112 | 112/112 | 112/112 |
+| Relevant tool ranked first | 112/112 | 112/112 | 106/112 |
+| Full relevant discovery schema | 112/112 | 112/112 | 104/112 |
+| Request-wrapper variants retrieve a relevant tool | 60/60 | 60/60 | 60/60 |
 | Unavailable-capability queries return no matches | 16/16 | 16/16 | 0/16 |
 
-OpenBot returns partial keyword matches for the unavailable-capability queries. Hermes deliberately requires the query's intent terms.
-The empty-result control measures that policy difference. It does not prove that OpenBot would execute an incorrect tool or fail a user task.
-The raw aggregate conformance counts are retained in the receipts, but are not presented as an agent leaderboard.
-Returned schemas were compared with the complete fixture JSON, rather than counted from field presence alone.
-The fixture schemas are small; separate regression tests cover schema budgets, references and invalid payloads.
+OpenBot returns partial keyword matches on the unavailable-capability controls.
+This is a retrieval-policy difference, not proof it would execute the wrong tool
+or fail a user task. No aggregate conformance score is presented as a bot win.
+Schema completeness requires exact equality with the fixture JSON. These fixture
+schemas are small; regression tests separately cover references and disclosure
+budgets. The additional query variants were written by the contributor and are
+not a blinded holdout. No retrieval criteria or fixture content changed to obtain
+this speed result.
 
-## Discovery latency
+The initial quality run recorded 52/112 supported hits on `6a3838d8`, versus
+112/112 after the earlier fixes. That historical result is retained with its
+own measured revisions and timings in the initial scorecard; it is not silently
+substituted for this run's before arm.
 
-Milliseconds, shown as p50 / p95 over 15 measured calls per query after two warmups.
-Arm order uses seed 20261027. Only one benchmark process ran at a time.
-The boundary includes the real search and result projection, Hermes's stateless catalog build/source classification, and neutral schema extraction.
-It excludes report serialization, process import time, provider inference, full bridge eligibility/dispatch and tool execution.
+## Durable queue contracts
 
-| Catalog size | Hermes before p50 / p95 | Hermes updated p50 / p95 | OpenBot p50 / p95 | Observed Hermes p50 reduction |
-|---|---:|---:|---:|---:|
-| 32 | 0.373 / 0.544 | 0.142 / 0.156 | 0.050 / 0.098 | 62.0% |
-| 256 | 3.031 / 3.612 | 0.909 / 1.066 | 0.309 / 0.436 | 70.0% |
-| 1,024 | 12.447 / 19.114 | 3.756 / 4.362 | 1.287 / 1.778 | 69.8% |
+All three arms pass seven distinct contracts in three fresh subprocess
+repetitions each (21/21 executions per arm): FIFO, persisted queued cancellation,
+active-work cancellation refusal and late-completion fencing, queued restart
+retention, honest active restart handling, recipient separation, and duplicate
+replay. No queue production change was made for these cases.
 
-OpenBot retains lower local discovery latency. Hermes's observed improvement is relative to its own previous version.
-These are host-specific timings over a synthetic workload, without confidence intervals or a multi-host campaign.
-They do not predict full agent latency or model cost.
+Reopening is orderly, not power-loss testing. OpenBot's real mailbox explicitly
+calls its conservative `recoverAsInterrupted` primitive, without testing its
+boot/provider-history coordinator. Hermes leaves uncertain work unknown and
+pauses followers; OpenBot marks it interrupted and permits followers. Both meet
+the stated no-replay/no-false-completion contract. Setup-inclusive queue timings
+are not advertised as throughput or agent speed.
 
-## Durable queues
+## Provenance and receipts
 
-All three arms passed seven contracts in each of three subprocess repetitions: FIFO order, persisted queued cancellation,
-active queued-cancellation refusal and late-completion fencing, queued restart retention, honest active restart recovery,
-recipient separation and idempotent replay. That is 21/21 contract executions per arm, covering seven distinct behaviors.
-No queue production patch was added because these contracts showed parity.
+- Hermes before: `b91a3b46c6fe0844de3939a33d90b1e4d85e02be`, an unchanged source archive.
+- Optimized Hermes: `70a43eee415d6ee40e13ec0fe058f6422693f2ec`, clean tracked tree, no untracked entries.
+- OpenBot: `f91535fb0c8d6fd0a63911ec6e4b67154fd85ebe`, clean tracked tree and one disclosed dependency link.
+- The actual Hermes registry is populated before timing. OpenBot's exported catalog
+  data is injected; its ranking implementation is unchanged. No fixture tool is executed.
+- [Protocol](README.md), [fixtures](fixtures.py), [runner](run.py).
+- [Complete latest raw receipts](results/search-optimized.json.gz): all 18 planned
+  launches completed, no runtime errors, no omitted or unfinished cases.
+- Uncompressed receipt SHA-256: `1a28bf8f81861d79d84b1df4e393b215508e3adde9e3209e37d561e3877ae666`.
+- Initial receipts and the abandoned nonexistent-profile diagnostic remain available
+  via the initial scorecard. Intermediate development profiles were not used as final scores.
 
-These tests reopen SQLite stores in an orderly manner. They do not simulate SIGKILL, power loss, external side effects or live provider reconnection.
-OpenBot's test explicitly invokes its conservative `recoverAsInterrupted` store primitive; its boot/provider-history coordinator is outside the test.
-Hermes leaves uncertain work unknown and pauses followers; OpenBot marks it interrupted and permits the follower.
-Both policies pass the stated no-replay/no-false-completion contract. Queue durations include database setup and are not advertised as throughput.
+## Validation
 
-## Provenance and reproducibility
+The broader bot-reliability selection at `b91a3b46` passed **3,064 tests across
+286 files, 0 failures, 15 platform skips**, retries disabled. After the search
+change, all **196 targeted tests across 13 files** pass, including discovery,
+registry, connectors, schema projection, scope/live updates, stable ties, exact
+names, token mutations, and evaluation contracts. All **13 blocking repository
+checks** pass. Earlier-source behavior probes retain their failing receipts;
+the new memory behavior also has the explicitly limited live model smoke test.
 
-- Hermes before: `6a3838d8c9d4c9788f25721825dcd4cf80d76692`, an unchanged source archive of the earlier draft-PR implementation.
-- Hermes measured implementation: [`9101b71e`](https://github.com/itsflownium/hermes-agent/commit/9101b71ee5b7eb2e6939368de5c72327dd5e3089).
-- OpenBot source: [`f91535fb`](https://github.com/nightly-labs/openbot/tree/f91535fb0c8d6fd0a63911ec6e4b67154fd85ebe).
-- Both tracked source trees were clean. OpenBot had one untracked runtime dependency link, disclosed by the metadata.
-- Both systems received identical names, descriptions, schemas and query order. Hermes's fixture populated a fresh actual registry outside timing;
-  OpenBot's fixture replaced only its exported catalog array. Neither engine's ranking implementation was replaced and no fixture handler was invoked.
-- Existing empty temporary profiles allow normal scope-key caching. Environments exclude credentials and user configuration.
-- [Protocol and setup](README.md), [fixtures](fixtures.py), and [runner](run.py).
-- [Full final receipts](results/final.json.gz): all 18 planned launches completed, with no runtime errors or omitted cases.
-
-An earlier setup diagnostic pointed at a nonexistent Hermes home, preventing normal scope-key caching and inflating lookup cost.
-It was stopped and excluded from performance interpretation. Its eight admissions (six completed, one timeout and one unfinished) out of 18 planned launches
-remain in the [setup diagnostic receipts](results/setup-diagnostic.json.gz), explicitly marked `aborted_setup_issue` and invalid for performance.
-Development smoke tests and that diagnostic are separate from the final experiment.
-
-The final uncompressed receipt SHA-256 is `4a45b25fc59be352bbb3a2b6245b348850d61dbb53ca0096d08e76d3c5c0f405`.
-The gzip files preserve the complete JSON and contain no source checkout paths or credentials.
-
-## Implementation validation
-
-The measured code passed the canonical regression selection: **1,514 passed, 0 failed, 8 platform skips across 139 files**, with retries disabled.
-All **13 blocking repository checks** passed. New discovery behavior tests fail five cases on the earlier source and retain a passing cache-isolation control.
-Registry work-bound regressions fail on the earlier implementation (96/97 scope resolutions) and pass with the fresh snapshot; scope/live-update controls pass both.
-The entire repository suite and native Windows/Linux runs were not executed on this Mac.
-
-Previously documented shell-wrapper failures in `tests/tools/test_terminal_pipeline_status.py` also reproduce on unchanged upstream source and remain outside this selection.
-No model-driven task benchmark, mobile/desktop user study, real network connector action, or learning-quality evaluation is included.
+The full repository suite and native Windows/Linux lanes were not run here.
+Previously documented shell-wrapper failures also reproduce on unchanged upstream
+source and remain outside these selections. A macOS path-alias assertion in the
+expanded delegation selection reproduced on unchanged earlier code; the test now
+compares resolved paths to the same database file. The final expanded selection
+passes without file retries.
