@@ -6,6 +6,8 @@ import { pathToFileURL } from "node:url";
 
 const request = JSON.parse(readFileSync(0, "utf8"));
 const root = request.state_directory;
+const modelId = request.model_id ?? "scripted";
+const selectedModel = `fixture/${modelId}`;
 const home = join(root, "home");
 const piHome = join(root, "pi-agent");
 mkdirSync(home, { recursive: true });
@@ -14,12 +16,12 @@ process.env.HOME = home;
 process.env.PI_CODING_AGENT_DIR = piHome;
 writeFileSync(join(piHome, "models.json"), JSON.stringify({providers: {fixture: {
   baseUrl: request.base_url, api: "openai-completions", apiKey: "fixture-local-only",
-  models: [{id: "scripted", name: "Local scripted fixture", reasoning: false,
-    input: ["text"], contextWindow: 128000, maxTokens: 2048,
+  models: [{id: modelId, name: "Evaluation model", reasoning: false,
+    input: ["text"], contextWindow: 128000, maxTokens: request.max_tokens ?? 2048,
     cost: {input: 0, output: 0, cacheRead: 0, cacheWrite: 0}}],
 }}}));
 writeFileSync(join(piHome, "settings.json"), JSON.stringify({
-  defaultProvider: "fixture", defaultModel: "scripted", defaultThinkingLevel: "off",
+  defaultProvider: "fixture", defaultModel: modelId, defaultThinkingLevel: "off",
 }));
 const repository = request.repository;
 const load = (relative: string) => import(pathToFileURL(join(repository, relative)).href);
@@ -44,10 +46,10 @@ const database = new OpenBotDatabase(join(root, "user-data"));
 const store = new AgentStore(join(root, "user-data"), home, database);
 const mailbox = new MailboxStore(join(root, "user-data"), store.sharedRoot, database);
 const agents = new AgentService({
-  store, mailbox, browser, preferredProvider: "pi", preferredModel: "fixture/scripted",
+  store, mailbox, browser, preferredProvider: "pi", preferredModel: selectedModel,
   offProviders: AGENT_PROVIDERS.filter((provider: string) => provider !== "pi"),
   bundledExecutables: {claude: null, grok: null, pi: request.pi_executable},
-  requestTimeoutMs: 20000,
+  requestTimeoutMs: request.request_timeout_ms ?? 20000,
 });
 const events: any[] = [];
 agents.on("event", (event: any) => events.push(event));
@@ -55,8 +57,8 @@ let completionTimer: ReturnType<typeof setTimeout> | undefined;
 try {
   await runCauseEffect(agents.initialize());
   let agentId: string | null = null;
-  const completion = new Promise<any>((resolve, reject) => {
-    completionTimer = setTimeout(() => {agents.off("event", listen); reject(new Error("No terminal backend event in 45 seconds"));}, 45000);
+  const expectTurn = () => new Promise<any>((resolve, reject) => {
+    completionTimer = setTimeout(() => {agents.off("event", listen); reject(new Error("No terminal backend event within evaluation deadline"));}, request.turn_timeout_ms ?? 45000);
     const listen = (event: any) => {
       if (event.type !== "turn-completed" || event.agentId !== agentId) return;
       clearTimeout(completionTimer);
@@ -65,24 +67,36 @@ try {
     };
     agents.on("event", listen);
   });
+  const completion = expectTurn();
   completion.catch(() => {});
   const agent = await runCauseEffect(agents.createAgent({
     name: "Backend fixture", description: "Local deterministic artifact test",
-    avatarSeed: "backend-fixture", avatarHue: null, initialMessage: request.prompt,
-    provider: "pi", model: "fixture/scripted",
+    avatarSeed: "backend-fixture", avatarHue: null, initialMessage: request.prompts?.[0] ?? request.prompt,
+    provider: "pi", model: selectedModel,
   }, (created: any) => Effect.sync(() => {
     agentId = created.id;
     if (request.seed_status_file) writeFileSync(join(created.workspacePath, "report.txt"), "ORIGINAL");
+    for (const [name, content] of Object.entries(request.fixture_files ?? {})) {
+      writeFileSync(join(created.workspacePath, name), content as string);
+    }
     return created;
   })));
   const terminal = await completion;
+  const terminals = [terminal];
+  for (const prompt of (request.prompts ?? []).slice(1)) {
+    const next = expectTurn();
+    next.catch(() => {});
+    await runCauseEffect(agents.sendMessage({agentId: agent.id, text: prompt}));
+    terminals.push(await next);
+  }
   const conversation = await runCauseEffect(agents.readConversation(agent.id));
   const outputs = Object.fromEntries(["report.txt", "attachment.txt"].map(name => {
     const path = join(agent.workspacePath, name);
     return [name, existsSync(path) ? readFileSync(path, "utf8") : null];
   }));
   process.stdout.write("OPENBOT_TASK_RESULT=" + JSON.stringify({
-    outputs, terminal, provider: agent.provider, model: agent.model,
+    outputs, terminal, terminals, provider: agent.provider, model: agent.model,
+    ...(request.return_workspace ? {workspace_path: agent.workspacePath} : {}),
     messages: conversation.messages, queue: agents.listQueue(agent.id),
     events: events.map(({type, code, status, turnId}: any) => ({type, code, status, turnId})),
     execution: "real AgentService + real PiAgentClient + pinned Pi native tool loop",
