@@ -1341,6 +1341,10 @@ agent:
 
 The evidence that feeds this guard (which test/lint/build commands ran, which files were edited since) lives in `~/.hermes/verification_evidence.db`. That ledger is only written or created while the guard is enabled; with `verify_on_stop: false` nothing is recorded and an existing file can be deleted freely.
 
+Local foreground checks and `hermes verify` bind their evidence to workspace content before and after execution. A successful command leaves verification stale if inputs changed during the run or after it. Full passing `hermes verify` evidence can satisfy another session only while the content still matches. Remote terminal paths do not acquire proof from similarly named files on the host, and incomplete or unreadable content scans remain unverified.
+
+Targeted checks prove their explicitly selected paths. A passing test for component A does not clear an edit to component B; filters, suite slices and unknown command options do not establish a full workspace pass. Use an unfiltered canonical command when the selected paths do not cover the edited code. The existing temporary-script fallback remains available for projects without a canonical verification command and stays labeled ad-hoc. Older ledger entries without content fingerprints require a fresh check.
+
 For a user/plugin policy gate at the same point — keep the agent going with your own checks — see the [`pre_verify` hook](./features/hooks.md#pre_verify).
 
 ## Standing Goals (`/goal`)
@@ -2158,7 +2162,8 @@ tool_loop_guardrails:
 
 Hard stops are designed to catch **replays** — the same call, unchanged, with nothing happening in between — not legitimate iteration:
 
-- **Edit → re-run is never a loop.** Any successful mutating call (`write_file`, `patch`, a green `terminal`/`execute_code`, a browser action, a job/message/cron mutation) marks progress for every failing call still being counted. The next identical retry (re-running a red test after a fix, re-snapshotting after a click) starts a fresh streak instead of accumulating toward a block.
+- **Edit → re-run stays allowed.** Successful file repairs, execution, browser actions and delegation mark progress for failing calls still being counted. The next identical retry (re-running a red test after a fix, re-snapshotting after a click) starts a fresh streak instead of accumulating toward a block.
+- **Bookkeeping recovery is scoped.** Task-list, memory, skill, messaging and schedule updates reset only their related tool-family failures. Removing a memory can free room for a failed memory add, but updating a todo cannot replenish an unrelated failing API call's allowance.
 - **Distinct red commands are diagnosis, not a loop.** For tools whose non-zero exit is ordinary output (`terminal`, `execute_code`, process pollers, `browser_exec`, `web_extract`) the `same_tool_failure` threshold only warns and never halts. Only an exact-args replay with no intervening change, or an identical-result streak, can stop them.
 - **A halt ends the turn, not the session.** The agent replies with which guardrail fired and why; replying "continue" resumes with fresh per-turn counters.
 

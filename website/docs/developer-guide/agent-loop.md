@@ -160,6 +160,15 @@ Some tools are intercepted by `agent/tool_executor.py` (called from `agent/conve
 
 These tools modify agent state directly and return synthetic tool results without going through the registry.
 
+### Failed-call recovery
+
+The per-turn guardrails distinguish an unchanged retry from an experiment after execution or a file
+repair. Successful task-list, memory, skill, messaging and schedule updates do not replenish another
+tool's failed-call allowance: bookkeeping cannot repair its prerequisites. A successful retry still
+clears that tool's own failure streak. A state update can repair failures within its own tool family,
+such as freeing a full memory store before retrying a memory write. File edits and execution retain the existing edit-and-retest
+behavior, and rate-limited retries keep their separate cooldown handling.
+
 ## Callback Surfaces
 
 `AIAgent` supports platform-specific callbacks that enable real-time progress in the CLI, gateway, and ACP integrations:
@@ -219,6 +228,16 @@ After each turn:
 - Memory changes are flushed to `MEMORY.md` / `USER.md`
 - The session can be resumed later via `/resume` or `hermes chat --resume`
 
+## Verification evidence
+
+The opt-in verify-on-stop gate consumes `agent/verification_evidence.py`; it does not add a model tool or change the cached system prompt. `begin_verification()` returns an input token owned by one execution attempt. The foreground terminal captures it before each attempt, and `hermes verify` captures it before running recipe phases. Recorders compare the token with completion content, and status reads compare that evidence with current content. Successful checks that changed their inputs remain stale; remote terminal backends cannot borrow a host snapshot.
+
+`agent/verification_snapshot.py` hashes file content and executable bits, including tracked deletions and nonignored Git inputs. Git worktrees are supported. Without Git, the fallback walk omits known cache, dependency and build directories. The active Hermes runtime home is excluded. Scans have file, byte and elapsed-time budgets (50,000 files, 256 MiB, five seconds of scan work); an incomplete scan provides no proof. At most eight workers hash bounded batches after byte budgets are reserved; workers use explicit paths without profile-dependent services. External or directory symlinks and submodule directories also leave evidence unbound. Fingerprints describe workspace inputs, not the installed dependency environment or external services, and are not atomic filesystem snapshots.
+
+`agent/verification_scope.py` retains explicit target paths without guessing test-to-source coverage. Name filters, slices, explicit environment overrides and unrecognized options are conservative. Passing targeted results can jointly cover edited paths only when their content still matches and they follow the latest recorded edit. The terminal receipt separates `check_status` (the command result) from `status` (usable verification), and includes scope, content binding and the reason verification remains incomplete. It reuses the just-captured completion snapshot; later public status reads capture again.
+
+The ledger migrates existing databases without dropping events or edit state. Pre-migration rows have no content proof and report stale. The recorder APIs retain their optional-argument compatibility: direct callers omitting the start token receive `snapshot.binding = "completion"`, which binds only the observed completion content and does not prove the execution's starting inputs. Production foreground and CLI paths supply the token and report `"execution"`. No input scans or ledger I/O run while verify-on-stop is disabled.
+
 ## Key Source Files
 
 | File | Purpose |
@@ -232,6 +251,7 @@ After each turn:
 | `agent/context_compressor.py` | Default engine — lossy summarization algorithm |
 | `agent/prompt_caching.py` | Anthropic prompt caching markers and cache metrics |
 | `agent/auxiliary_client.py` | Auxiliary LLM client for side tasks (vision, summarization) |
+| `agent/verification_evidence.py`, `agent/verification_snapshot.py`, `agent/verification_scope.py` | Content freshness, command attribution and targeted coverage for verify-on-stop |
 | `model_tools.py` | Tool schema collection, `handle_function_call()` dispatch |
 
 ## Related Docs

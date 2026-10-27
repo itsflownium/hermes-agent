@@ -116,7 +116,9 @@ def _verification_snapshot(
         facts = project_facts_for(cwd)
         if not facts:
             continue
-        status = verification_status(session_id=session_id, cwd=cwd)
+        root = Path(facts["root"]).resolve()
+        workspace_paths = [p for p in changed_paths if Path(p).resolve().is_relative_to(root)]
+        status = verification_status(session_id=session_id, cwd=cwd, required_paths=workspace_paths)
         first_snapshot = first_snapshot or (status, facts)
         if str(status.get("status") or "unverified") != "passed":
             return status, facts
@@ -158,6 +160,8 @@ def _status_detail(status: dict[str, Any]) -> str:
     command = evidence.get("canonical_command") or evidence.get("command")
     summary = str(evidence.get("output_summary") or "").strip()
     parts = [state]
+    if status.get("reason"):
+        parts.append(str(status["reason"]))
     if command:
         parts.append(f"last command `{command}`")
     if summary:
@@ -204,6 +208,8 @@ def build_verify_on_stop_nudge(
             + ", ".join(f"`{cmd}`" for cmd in verify_commands[:3])
             + (", ..." if len(verify_commands) > 3 else "")
             + "), read any failure, repair the code, and summarize what passed."
+            " A targeted run proves only its selected paths; use an unfiltered workspace "
+            "check when the selected paths do not cover the edited code."
         )
         if has_recipe:
             command_instruction += (

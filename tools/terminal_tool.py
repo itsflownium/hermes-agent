@@ -1315,6 +1315,7 @@ def _run_foreground(
     """Execute in the foreground with retry on transient errors, then finalize. ``metered``
     is False for Hermes' own control-plane commands (``_host_local``)."""
     from hermes_cli.observability.shared_metrics_harness import record_terminal_outcome
+    from tools.terminal_tool_result import begin_foreground_verification
     max_retries = 3
     env_type, eff, effective_timeout = plan.env_type, plan.effective_task_id, plan.effective_timeout
 
@@ -1333,6 +1334,9 @@ def _run_foreground(
                 workdir=workdir, default_cwd=plan.cwd, session_key=session_key, env_type=env_type,
                 mounted_host=getattr(env, "host_cwd", None) or plan.host_cwd,
                 env=env,
+            )
+            verification_snapshot = begin_foreground_verification(
+                command, command_cwd, session_id or task_id or eff or "default", env_type,
             )
             # bounded_capture: model-facing output keeps a head/tail window
             # while streaming so a verbose command can't OOM the gateway;
@@ -1371,6 +1375,7 @@ def _run_foreground(
         command=command, result=result, env=env, env_type=env_type, effective_task_id=eff,
         task_id=task_id, session_id=session_id, session_key=session_key, workdir=workdir,
         command_cwd=command_cwd, approval_note=approval_note,
+        verification_snapshot=verification_snapshot,
     )
 
 

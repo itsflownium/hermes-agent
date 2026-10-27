@@ -193,14 +193,30 @@ def _redact_spill_file(path, total_chars, command) -> list[tuple[str, Any]]:
     return [("output_total_chars", total_chars), ("full_output_path", path), ("truncation_note", note)]
 
 
-def _verification_evidence(command, cwd, session_id, returncode, output, pipeline_status=None) -> Optional[dict]:
+def begin_foreground_verification(command, cwd, session_id, env_type) -> Optional[dict]:
+    """Start proof for this attempt only; remote paths never acquire host-file proof."""
+    with _quiet("verification input capture"):
+        from agent.verification_evidence import begin_verification
+
+        snapshot = begin_verification(command=command, cwd=cwd, session_id=session_id, local=env_type == "local")
+        if snapshot is not None:
+            return snapshot
+    return {"fingerprint": None, "reason": "verification inputs could not be captured at command start"}
+
+
+def _verification_evidence(command, cwd, session_id, returncode, output, pipeline_status=None, snapshot=None) -> Optional[dict]:
     with _quiet("verification evidence recording"):
-        from agent.verification_evidence import record_terminal_result
+        from agent.verification_evidence import _recorded_verification_status, record_terminal_result
         evidence = record_terminal_result(command=command, cwd=cwd, session_id=session_id,
                                           exit_code=returncode, output=output,
-                                          pipeline_status=pipeline_status)
+                                          pipeline_status=pipeline_status, snapshot=snapshot)
         if evidence:
-            return {k: evidence.get(k) for k in ("status", "kind", "scope", "canonical_command")}
+            status = _recorded_verification_status(evidence)
+            return {
+                "status": status["status"], "check_status": evidence["status"],
+                **{k: evidence.get(k) for k in ("kind", "scope", "canonical_command", "covered_paths", "snapshot")},
+                "reason": status.get("reason", ""),
+            }
     return None
 
 
@@ -208,6 +224,7 @@ def finalize_foreground_result(
     *, command: str, result: dict, env: Any, env_type: str, effective_task_id: str,
     task_id: Optional[str], session_id: Optional[str], session_key: str,
     workdir: Optional[str], command_cwd: Optional[str], approval_note: Optional[str],
+    verification_snapshot: Optional[dict] = None,
 ) -> str:
     """Turn a raw ``env.execute`` result into the tool's JSON result string."""
     from tools.terminal_tool import record_session_cwd
@@ -265,7 +282,7 @@ def finalize_foreground_result(
         *_redact_spill_file(result.get("full_output_path"), result.get("output_total_chars"), command),
         ("verification_evidence", _verification_evidence(
             command, command_cwd, session_id or task_id or effective_task_id or "default",
-            returncode, output, result.get("pipeline_status"))),
+            returncode, output, result.get("pipeline_status"), verification_snapshot)),
         ("approval", approval_note or None),
         ("exit_code_meaning", exit_note or None),
         ("hint", failure_hint or None),
