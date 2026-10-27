@@ -37,6 +37,26 @@ jobs:
           test-environment: 'true'
           save-tools-cache: 'false'
           save-python-cache: 'false'
+      - name: Probe unchanged upstream Windows controls
+        if: runner.os == 'Windows'
+        continue-on-error: true
+        shell: bash
+        env:
+          HERMES_TEST_FILE_RETRIES: '0'
+          HERMES_TEST_WORKERS: '2'
+        run: |
+          set -o pipefail
+          EVAL_CURRENT_ROOT="$(pwd)"
+          EVAL_BASELINE_ROOT="$(cygpath -u "$RUNNER_TEMP")/original-bot-controls"
+          git fetch --no-tags --depth=1 origin c714c42431e518fcd1c8870eff5c667d5de33b57
+          mkdir -p "$EVAL_BASELINE_ROOT"
+          git archive c714c42431e518fcd1c8870eff5c667d5de33b57 | tar -xf - -C "$EVAL_BASELINE_ROOT"
+          {
+            git rev-parse c714c42431e518fcd1c8870eff5c667d5de33b57
+            cd "$EVAL_BASELINE_ROOT"
+            scripts/run_tests.sh tests/tools/test_file_tools.py tests/tools/test_file_read_guards.py \
+              -k 'test_read_file_tool_rejects_device_symlink_before_io or test_symlink_to_blocked_device_is_blocked or test_patch_move_to_sensitive_dst_blocked or test_patch_update_no_space_after_asterisks_blocked or test_system_path_still_blocked or test_macos_private_var_carveouts' -q
+          } 2>&1 | tee "$EVAL_CURRENT_ROOT/bot-platform-baseline.log"
       - name: Run bot completion and recovery contracts
         shell: bash
         env:
@@ -47,6 +67,8 @@ jobs:
           scripts/run_tests.sh \
             tests/agent/test_bot_mode_completion_review.py \
             tests/agent/test_bot_mode_completion_readback.py \
+            tests/agent/test_bot_mode_terminal_completion.py \
+            tests/agent/test_nt_namespace_guard.py \
             tests/agent/test_todo_completion_guard.py \
             tests/agent/test_task_iteration_budget.py \
             tests/agent/test_verification_continuation_budget.py \
@@ -72,5 +94,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: bot-platform-${{ matrix.os }}
-          path: bot-platform-tests.log
+          path: |
+            bot-platform-tests.log
+            bot-platform-baseline.log
           if-no-files-found: warn

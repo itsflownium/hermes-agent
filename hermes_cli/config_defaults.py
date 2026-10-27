@@ -1892,7 +1892,7 @@ DEFAULT_CONFIG = {
     # Bot Mode cross-connection relay (tools/bot_relay.py): envelopes queued by message_agent for
     # agents on other connections wait in an on-disk outbox until the Desktop drains them.
     "bot_mode": {
-        # One completion reminder after confirmed native file edits when no checklist was authored.
+        # One reminder after native file edits or a completed terminal command, without an authored checklist.
         # Canonical managed Bot Chats only; false avoids the extra model call.
         "completion_review": True,
         # Drain-time TTL (seconds): older envelopes are NOT delivered on drain; the sender gets an

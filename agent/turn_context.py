@@ -617,6 +617,7 @@ _PER_TURN_RESET_STATE: tuple[tuple[str, Any], ...] = (
     ("_pre_verify_nudges", 0), ("_lsp_turn_end_notes", 0),
     ("_todo_written_this_turn", False), ("_todo_completion_nudges", 0),
     ("_artifact_completion_reviewed", False),
+    ("_turn_terminal_completed", False),
 )
 
 

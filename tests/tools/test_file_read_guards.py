@@ -136,6 +136,7 @@ class TestDevicePathBlocking(unittest.TestCase):
         self.assertFalse(_is_blocked_device("/tmp/test.py"))
         self.assertFalse(_is_blocked_device("/home/user/.bashrc"))
 
+    @pytest.mark.platforms("posix")
     def test_symlink_to_blocked_device_is_blocked(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             link_path = os.path.join(tmpdir, "zero-link")
@@ -165,6 +166,7 @@ class TestDevicePathBlocking(unittest.TestCase):
         self.assertIn("error", result)
         self.assertIn("device file", result["error"])
 
+    @pytest.mark.platforms("posix")
     @patch("tools.file_tools._get_file_ops")
     def test_read_file_tool_rejects_device_symlink_before_io(self, mock_ops):
         with tempfile.TemporaryDirectory() as tmpdir:

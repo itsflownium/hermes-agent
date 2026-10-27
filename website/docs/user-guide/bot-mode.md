@@ -87,8 +87,8 @@ Remote-creation notes:
 
 ## Completion review
 
-After a managed Bot Chat changes files through the native file tools without
-writing a checklist, Hermes gives it one completion-review reminder before the
+After a managed Bot Chat changes files through the native file tools or completes
+a terminal command without writing a checklist, Hermes gives it one completion-review reminder before the
 final response. The Bot compares the original request with its tool results,
 finishes missing authorized deliverables, or explains a blocker. Existing
 checklist completion checks handle turns that maintain `todo_list`.
@@ -104,8 +104,10 @@ line prefixes, so those prefixes can be distinguished from real data separators.
 This can add one model request when the file work was already complete; finishing
 missing work can take more requests within the existing iteration allowance.
 The reminder does not extend that allowance or certify correctness. A budget
-stop reports that the review did not finish. Read-only turns and ordinary chats
-do not trigger it. Disable it in the Bot's configuration when that overhead is
+stop reports that the review did not finish. File reads, text-only turns and ordinary chats
+do not trigger it. A completed terminal command can trigger a review even when it
+only read data, because completion does not declare whether it changed files.
+Disable it in the Bot's configuration when that overhead is
 unwanted:
 
 ```yaml
