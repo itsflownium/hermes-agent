@@ -26,9 +26,9 @@ def git(root: Path, *arguments: str) -> str:
     ).strip()
 
 
-def verify_before(archive: Path, repository: Path) -> int:
+def verify_before(archive: Path, repository: Path, revision: str = BASELINE) -> int:
     entries = subprocess.check_output(
-        ["git", "-C", str(repository), "ls-tree", "-rz", BASELINE], timeout=15
+        ["git", "-C", str(repository), "ls-tree", "-rz", revision], timeout=15
     )
     checked = 0
     for entry in filter(None, entries.split(b"\0")):

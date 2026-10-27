@@ -97,3 +97,15 @@ not fake filesystem results. The old archive receives only the new probe test
 module. Production files stay unchanged. Failed stage/link operations and separate
 envelope controls run through the canonical test runner. No OpenBot
 score is inferred from this Hermes-specific publication contract.
+
+## Untouched upstream baseline
+
+After the three-variant cycle, `run_original_baseline.py` adds the original
+Hermes upstream revision `c714c42431e518fcd1c8870eff5c667d5de33b57` to the same
+six fixed cases. Verify every tracked Python blob against Git before and after.
+Use an unchanged source archive, the same scripted endpoint/tool adapter, actual
+managed Bot Chat identity, three fresh-process repetitions per case and shuffle
+seed 20261027: 18 additional launches. No response sequence or acceptance rule
+changes. This is an additional baseline, not a replacement of the earlier
+admissions. It measures these runtime contracts; it does not create a general
+percentage improvement over original Hermes.
