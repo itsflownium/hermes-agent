@@ -5,6 +5,9 @@ identical synthetic inputs, without model calls, accounts, or network access
 during measurement. It measures component behavior and local overhead. It does
 not measure reasoning quality, desktop usability, or overall agent superiority.
 
+The default `run.py` remains offline. Explicit public network checks and a small
+Nous Portal memory smoke test are documented separately in [ONLINE.md](ONLINE.md).
+
 The OpenBot implementation is imported from a separately supplied checkout.
 No competitor implementation is copied into this repository. Its license and
 the license of every runtime dependency still apply to those external sources.
