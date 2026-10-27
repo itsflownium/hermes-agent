@@ -37,6 +37,9 @@ class CatalogEntry:
 
 _TOKEN_RE = re.compile(r"[A-Za-z0-9]+")
 _thread_local = threading.local()
+_CACHED_SEARCH_TEXT_MAX_CHARS = 2048
+_QUERY_PREFIX_RE = re.compile(r"^\s*(?:(?:please|kindly)\s+|(?:can|could|would|will)\s+you\s+)+", re.IGNORECASE)
+_QUERY_SUFFIX_RE = re.compile(r"\s+(?:for\s+me|please|kindly)[.!?]*\s*$", re.IGNORECASE)
 
 
 @functools.lru_cache(maxsize=16384)
@@ -49,10 +52,35 @@ def _stem(token: str) -> str:
     return _thread_local.stemmer.stemWord(token)
 
 
+def _token_tuple(text: str) -> tuple[str, ...]:
+    return tuple(_stem(token.lower()) for token in _TOKEN_RE.findall(text))
+
+
+_cached_token_tuple = functools.lru_cache(maxsize=2048)(_token_tuple)
+
+
 def _tokenize(text: str) -> list[str]:
-    """Lowercase alphanumeric tokens, Snowball-stemmed (English); shared by the index and
-    query paths so "issues" matches ``create_issue``."""
-    return [_stem(token.lower()) for token in _TOKEN_RE.findall(text)] if text else []
+    """Stem English tokens; cache bounded immutable text results, never live catalog entries.
+
+    Each caller receives its own list. Changed descriptions and parameter names are new
+    keys, so stateless catalog rebuilds retain current schemas and relevance.
+    """
+    if not text:
+        return []
+    tokens = _cached_token_tuple(text) if len(text) <= _CACHED_SEARCH_TEXT_MAX_CHARS else _token_tuple(text)
+    return list(tokens)
+
+
+def _query_tokens(text: str) -> list[str]:
+    """Remove request wrappers while keeping service names and substantive intent words.
+
+    This is query-only: a CAN-bus tool still indexes and requires "can" unless that
+    word forms the explicit "can you" request prefix.
+    """
+    text = _QUERY_PREFIX_RE.sub("", text)
+    for _ in range(2):
+        text = _QUERY_SUFFIX_RE.sub("", text)
+    return _tokenize(text)
 
 
 def _fn(td: dict[str, Any]) -> dict[str, Any]:
@@ -183,7 +211,7 @@ def search_catalog(catalog: list[CatalogEntry], query: str, limit: int = 5, *,
     gmail email" returned 5 incident tools that only shared ``email``). A token no document
     carries admits nothing; the caller's empty-group hint tells the model to retry without it.
     Long queries additionally need :func:`_required_term_coverage` of their answerable terms."""
-    query_tokens = _tokenize(query) if catalog and limit > 0 else []
+    query_tokens = _query_tokens(query) if catalog and limit > 0 else []
     if not query_tokens:
         return []
     corpus_stats = corpus_stats or _corpus_stats(catalog)

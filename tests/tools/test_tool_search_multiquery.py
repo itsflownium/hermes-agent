@@ -105,7 +105,7 @@ class TestStemming:
             dispatch_tool_search,
             search_catalog,
         )
-        from tools.tool_search_catalog import _stem, _tokenize
+        from tools.tool_search_catalog import _cached_token_tuple, _stem, _tokenize
 
         corpus = (
             "issues",
@@ -133,6 +133,7 @@ class TestStemming:
             ]
 
         _stem.cache_clear()
+        _cached_token_tuple.cache_clear()
         misses_before = _stem.cache_info().misses
         with ThreadPoolExecutor(max_workers=8) as pool:
             threaded = list(pool.map(tokenize_and_search, range(512)))
