@@ -44,6 +44,9 @@ the license of every runtime dependency still apply to those external sources.
   measurement. Every launch is checkpointed before execution. Timeouts, invalid output,
   runtime errors, unfinished starts and unsupported cases remain visible.
   Credentials are excluded from subprocess environments; state is temporary.
+  The isolated Hermes home exists before import, matching a provisioned profile
+  and allowing the normal scope-key cache. A nonexistent-home diagnostic is not
+  comparable performance evidence and must be reported separately.
 
 The fixture files contain the acceptance criteria. The report contains their
 SHA-256 digest, adapter digests, source revisions, all raw observations and all

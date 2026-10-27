@@ -177,6 +177,7 @@ def checkpoint(path: Path, report: dict) -> None:
 def invoke(command: list[str], payload: dict | None = None, timeout: int = 180) -> dict:
     started = time.perf_counter()
     with tempfile.TemporaryDirectory(prefix="bot-component-bench-") as home:
+        (Path(home) / "hermes").mkdir()
         try:
             process = subprocess.run(
                 command,
@@ -288,6 +289,7 @@ def run(args: argparse.Namespace) -> dict:
     report = {
         "schema_version": 1,
         "track": "offline_production_components",
+        "temporary_profile": "existing_empty_directory",
         "started_at_utc": datetime.now(UTC).isoformat(timespec="seconds"),
         "platform": platform.system(),
         "machine": platform.machine(),

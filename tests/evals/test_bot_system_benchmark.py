@@ -2,6 +2,7 @@
 
 import json
 import subprocess
+import sys
 
 import pytest
 
@@ -28,6 +29,22 @@ def test_checkpoint_retains_unfinished_and_failed_launches(tmp_path):
     assert saved["launches"] == 2 and saved["completed_launches"] == 1
     assert saved["discovery"][0]["status"] == "timeout"
     assert saved["expected_launches"] == 8 and saved["run_status"] == "running"
+
+
+def test_invoke_provisions_the_isolated_profile_and_excludes_credentials(monkeypatch):
+    monkeypatch.setenv("BENCHMARK_FAKE_API_KEY", "fixture-only")
+    command = [
+        sys.executable,
+        "-c",
+        (
+            "import json, os; from pathlib import Path; "
+            "print(json.dumps({'profile_exists': Path(os.environ['HERMES_HOME']).is_dir(), "
+            "'credential_inherited': 'BENCHMARK_FAKE_API_KEY' in os.environ}))"
+        ),
+    ]
+    result = bench.invoke(command)
+    assert result["status"] == "completed"
+    assert result["data"] == {"profile_exists": True, "credential_inherited": False}
 
 
 def test_discovery_score_keeps_misses_and_false_positives_in_denominator():
