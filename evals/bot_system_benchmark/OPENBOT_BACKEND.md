@@ -67,3 +67,33 @@ failed before their tests started and produced no reports. Retain these as setup
 diagnostics. The compatible pinned Bun is required for the measured upstream run.
 An adapter pilot with an empty initial message was refused by the real service;
 the adapter uses its required initial-message creation flow before graded runs.
+
+## Subsequent Bot Mode improvement cycle
+
+The initial six shared cases also run in real managed Bot Chat sessions, using
+an actual profile marker, SessionDB title and desktop surface. The before arm is
+an unchanged `00a8b6b2` archive; verify its tracked Python blobs. The after arm is
+a clean implementation commit. The unchanged OpenBot/Pi arm is included again:
+54 launches, six cases, three variants, three fresh-process repetitions, fixed
+shuffle seed 20261027. Use `run_bot_mode_cycle.py`. Completed sequences repeat
+their last scripted final answer if a runtime asks for a review; premature-final
+sequences retain the already-declared continuation with the missing file write.
+These follow-up responses are supplied equally to every arm.
+
+Record the review's extra request overhead explicitly. Do not attribute a native
+runtime's continuation to a real model's reasoning quality. Further real Bot Chat
+regressions use JSON/CSV and Markdown/TSV/JSON deliverables, no checklist, next-turn
+reset, stable message prefix/schemas, disabled config, ordinary chats, reads and
+an exhausted iteration allowance. These are additional authored cases, not a
+blinded holdout. Preserve the initial common-case failure receipts.
+
+A separate `run_relay_settlement.py` run tests the first reply race with two real
+processes. Both reach the publication boundary before the first is released; the
+second resumes only after the first result has been read. Run both outcome orders
+(answer before error, error before answer), ten fresh-process repetitions per arm:
+40 launches. Compare the first observed bytes with the final bytes; a changed reply
+is a failure. This uses the same filesystem-write wrapper in both implementations,
+not fake filesystem results. The old archive receives only the new probe test
+module. Production files stay unchanged. Failed stage/link operations and separate
+envelope controls run through the canonical test runner. No OpenBot
+score is inferred from this Hermes-specific publication contract.

@@ -18,11 +18,14 @@ def _remaining(agent) -> list[dict]:
 
 def completion_nudge(agent) -> str | None:
     if (
-        getattr(agent, "_todo_written_this_turn", False) is not True
-        or getattr(agent, "_task_completion_guidance", True) is False
+        getattr(agent, "_task_completion_guidance", True) is False
         or getattr(agent, "_interrupt_requested", False) is True
     ):
         return None
+    if getattr(agent, "_todo_written_this_turn", False) is not True:
+        from agent.task_completion_bot_mode import artifact_completion_nudge
+
+        return artifact_completion_nudge(agent)
     from hermes_cli.config import load_config_readonly
 
     value = (load_config_readonly().get("agent") or {}).get("todo_completion_nudges", 1)
@@ -52,16 +55,22 @@ def completion_nudge(agent) -> str | None:
 
 
 def completion_result_fields(agent) -> dict:
+    review = (
+        {"task_completion_review": {"requested": True, "completion_verified": False}}
+        if getattr(agent, "_artifact_completion_reviewed", False) is True
+        else {}
+    )
     if getattr(agent, "_todo_written_this_turn", False) is not True:
-        return {}
+        return review
     remaining = _remaining(agent)
     return {
+        **review,
         "task_checklist": {
             "reported_status": "incomplete" if remaining else "no_active_items",
             "remaining_count": len(remaining),
             "remaining_ids": [item["id"] for item in remaining[:20]],
             "completion_verified": False,
-        }
+        },
     }
 
 
@@ -69,6 +78,11 @@ def completion_budget_fallback(agent, candidate):
     """Do not republish an unchecked 'done' candidate after its continuation ran out."""
     nudges = getattr(agent, "_todo_completion_nudges", 0)
     if type(nudges) is not int or nudges <= 0:
+        if getattr(agent, "_artifact_completion_reviewed", False) is True:
+            return (
+                "The iteration budget ended before the Bot Mode completion review finished. "
+                "Requested deliverables have not been verified. Review the remaining work before continuing."
+            )
         return candidate
     remaining = _remaining(agent)
     if not remaining:

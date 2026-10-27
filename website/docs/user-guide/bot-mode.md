@@ -85,6 +85,34 @@ Remote-creation notes:
 
 **Duplicate** (right-click) makes a full clone of a Bot — config, skills, SOUL.md, memory, and its look. **Delete Profile** permanently removes one, behind the same destructive confirmation the desktop's profile menu uses; the default profile cannot be deleted.
 
+## Completion review
+
+After a managed Bot Chat changes files through the native file tools without
+writing a checklist, Hermes gives it one completion-review reminder before the
+final response. The Bot compares the original request with its tool results,
+finishes missing authorized deliverables, or explains a blocker. Existing
+checklist completion checks handle turns that maintain `todo_list`.
+
+This can add one model request when the file work was already complete; finishing
+missing work can take more requests within the existing iteration allowance.
+The reminder does not extend that allowance or certify correctness. A budget
+stop reports that the review did not finish. Read-only turns and ordinary chats
+do not trigger it. Disable it in the Bot's configuration when that overhead is
+unwanted:
+
+```yaml
+bot_mode:
+  completion_review: false
+```
+
+`agent.task_completion_guidance: false` also disables completion reminders.
+The review preserves the earlier conversation and tool schemas. Its result
+metadata records that a review was requested, with `completion_verified: false`.
+
+Bot-to-Bot reply settlement is also atomic across processes: the first published
+reply or refusal stays unchanged if a duplicate callback or late timeout arrives.
+A failed publication leaves no empty final reply reserved for the sender.
+
 ## Avatars
 
 Every Bot gets a face:

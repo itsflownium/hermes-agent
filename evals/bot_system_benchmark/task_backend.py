@@ -128,7 +128,7 @@ def wire_observations(requests: list[dict]) -> dict:
     }
 
 
-def hermes_turn(root: Path, case: str, base_url: str) -> dict:
+def hermes_turn(root: Path, case: str, base_url: str, surface: str = "core") -> dict:
     from tests.e2e.core.history._helpers import NO_BACKGROUND_REVIEW, OFFLINE_CONFIG
     from tests.fakes.fake_llm_provider import write_hermes_home
     from run_agent import AIAgent
@@ -141,6 +141,24 @@ def hermes_turn(root: Path, case: str, base_url: str) -> dict:
     os.chdir(workspace)
     if case == "status_only":
         (workspace / "report.txt").write_text("ORIGINAL")
+    database = None
+    session_options = {}
+    if surface == "bot_chat":
+        from hermes_state import SessionDB
+        from utils import atomic_json_write
+
+        atomic_json_write(
+            home / "profile.yaml", {"ui_meta": {"hermes-bots": {"title": "Fixture"}}}
+        )
+        database = SessionDB(db_path=home / "state.db")
+        session_id = "matched-bot-chat"
+        database.create_session(session_id, "desktop")
+        database.set_session_title(session_id, "Bot Chat")
+        session_options = {
+            "session_db": database,
+            "session_id": session_id,
+            "platform": "desktop",
+        }
     agent = AIAgent(
         provider="custom",
         base_url=base_url,
@@ -156,6 +174,7 @@ def hermes_turn(root: Path, case: str, base_url: str) -> dict:
         max_tokens=2048,
         cwd=str(workspace),
         fallback_model={},
+        **session_options,
     )
     agent.client.max_retries = 0
     try:
@@ -173,10 +192,14 @@ def hermes_turn(root: Path, case: str, base_url: str) -> dict:
             "final_response": result.get("final_response"),
             "failed": result.get("failed"),
             "checklist": result.get("task_checklist"),
+            "completion_review": result.get("task_completion_review"),
+            "surface": surface,
             "execution": "real AIAgent + real native file tools; no preloaded checklist",
         }
     finally:
         agent.close()
+        if database is not None:
+            database.close()
 
 
 def openbot_turn(args, root: Path, case: str, base_url: str) -> dict:
@@ -231,7 +254,8 @@ def worker(args) -> dict:
         )
         from tests.fakes.fake_llm_provider import FakeLLMServer, Text
 
-        steps = iter(scripts(args.arm, args.case))
+        responses = scripts(args.arm, args.case)
+        steps = iter(responses)
         served = []
         setup_errors = []
 
@@ -239,9 +263,7 @@ def worker(args) -> dict:
             if len(served) >= 12:
                 setup_errors.append("Twelve-response fixture ceiling exceeded")
                 return Text("FIXTURE_REQUEST_CEILING")
-            response = next(
-                steps, Text("Stopped; requested fixture responses are exhausted.")
-            )
+            response = next(steps, responses[-1])
             served.append(type(response).__name__)
             name = getattr(response, "name", None)
             available = {
@@ -254,7 +276,7 @@ def worker(args) -> dict:
 
         with FakeLLMServer(respond) as server:
             observed = (
-                hermes_turn(root, args.case, server.base_url)
+                hermes_turn(root, args.case, server.base_url, args.surface)
                 if args.arm == "hermes"
                 else openbot_turn(args, root, args.case, server.base_url)
             )
@@ -290,6 +312,8 @@ def launch(args, arm: str, case: str) -> dict:
         arm,
         "--case",
         case,
+        "--surface",
+        getattr(args, "surface", "core"),
         "--hermes",
         str(args.hermes.resolve()),
         "--openbot",
@@ -354,6 +378,7 @@ def run(args) -> None:
         "state": "running",
         "planned_launches": len(plan),
         "paid_inference": False,
+        "hermes_surface": args.surface,
         "source_revision": {
             "hermes": revision,
             "openbot": "f91535fb0c8d6fd0a63911ec6e4b67154fd85ebe",
@@ -413,6 +438,7 @@ def main() -> None:
     parser.add_argument("--worker", action="store_true")
     parser.add_argument("--arm", choices=("hermes", "openbot"))
     parser.add_argument("--case", choices=CASES)
+    parser.add_argument("--surface", choices=("core", "bot_chat"), default="core")
     parser.add_argument("--hermes", type=Path, required=True)
     parser.add_argument("--openbot", type=Path, required=True)
     parser.add_argument("--bun", type=Path, required=True)
