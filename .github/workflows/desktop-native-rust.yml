@@ -1,5 +1,7 @@
 name: Hermes Desktop (Rust)
 on:
+  push:
+    branches: [ci/native-rust-build]
   workflow_dispatch:
   pull_request:
     paths:
